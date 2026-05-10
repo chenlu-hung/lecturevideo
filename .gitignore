@@ -1,0 +1,15 @@
+# Skill outputs (generated per topic; do not commit)
+output/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local-only Claude Code permission state
+.claude/settings.local.json
