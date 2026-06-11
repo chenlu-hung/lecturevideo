@@ -1,7 +1,7 @@
 ---
 name: lecture-video-generator
-description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing.
-version: 0.1.0
+description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice.
+version: 0.2.0
 ---
 
 # Lecture Video Generator
