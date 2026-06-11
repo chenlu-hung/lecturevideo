@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-11T08:22:57+00:00",
+  "generated": "2026-06-11T09:33:32+00:00",
   "mode": "update",
   "depth": 2,
   "source": "git",
@@ -11,7 +11,7 @@
       "doc": "modules/assets__player.md"
     },
     "scripts": {
-      "hash": "2ae47f27d7c17c3d82f3ed3f6442c6f6683be0e81fdd3fc10789f0b1ed558b4a",
+      "hash": "c566827a0d98abeb2bb284a8d7d1618a045159d8c589804919b3bf94abfe5481",
       "files": 5,
       "doc": "modules/scripts.md"
     }
