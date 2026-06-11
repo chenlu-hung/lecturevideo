@@ -1,0 +1,19 @@
+{
+  "generated": "2026-06-11T03:51:57+00:00",
+  "mode": "build",
+  "depth": 2,
+  "source": "git",
+  "files": 5,
+  "modules": {
+    "assets/player": {
+      "hash": "8945e2ebb9be5e7f74668e4703fd17ea532b2d47b85c7104f43c8ce03400016a",
+      "files": 1,
+      "doc": "modules/assets__player.md"
+    },
+    "scripts": {
+      "hash": "bd2d8329ef3e3f5ff404c97fa50615cc8c2c4b15589dc712325f7d8bc0398c36",
+      "files": 4,
+      "doc": "modules/scripts.md"
+    }
+  }
+}
