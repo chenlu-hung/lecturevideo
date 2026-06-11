@@ -137,6 +137,35 @@ output/<slug>/
 
 ---
 
+## 加上旁白配音（TTS）
+
+預設產出的是「無聲、依時間軸自動換頁」的影片。若要產生**真正有人聲旁白**的影片,在觸發時加上 `tts` 並提供一段參考人聲:
+
+```
+幫我做一個關於「反向傳播」的上課影片,繁體中文,要有旁白,聲音用 my_voice.wav
+```
+
+運作方式:
+
+- 使用本地的 [IndexTTS-2 MLX-Swift](https://github.com/) 引擎(zero-shot 聲音複製,只需幾秒乾淨人聲當參考)。
+- 逐句把講稿送進 TTS(單次 `--srt` 批次,模型只載入一次),合成 `narration.wav`(16-bit PCM mono 22.05 kHz)。
+- **依真實音訊長度重算 `timeline.json`**:投影片在該頁旁白唸完時才切換,overlay 也在實際講到時淡入/淡出——不是用講稿裡估計的時間戳。
+- `[overlay:*]` 標記在送進 TTS 前會被移除,不會被唸出來。
+- **繁體中文會先用 `opencc` 轉成簡體再送進 TTS**(IndexTTS-2 的詞表只有簡體,繁體字會發音錯誤);投影片與字幕仍維持繁體,只有「唸出來的文字」被轉換。
+
+| 參數 | 預設 | 說明 |
+|------|------|------|
+| `tts` | `false` | 設為 true 才會合成旁白 |
+| `voice_ref` | (必填) | 要複製的參考人聲 `.wav` |
+| `emotion_ref` | 同 `voice_ref` | 另指定一段音檔來決定語氣情緒 |
+| `indextts2_dir` | `$INDEXTTS2_DIR` | IndexTTS-2 MLX checkout 路徑(含已編譯 CLI 與模型) |
+
+需要條件:Apple Silicon、已 `./build.sh Debug` 編好的 IndexTTS-2 CLI、轉好的模型權重,繁體中文還需要 `opencc`(`brew install opencc`)。沒有這些時無聲路徑照常可用。合成是運算密集的(數分鐘),可用 `--seed` 讓結果可重現。
+
+底層腳本與時間軸重算細節見 [`references/player-architecture.md`](references/player-architecture.md) 「TTS audio」一節。
+
+---
+
 ## 目錄結構
 
 ```
@@ -153,7 +182,8 @@ output/<slug>/
 │   ├── compile_marp.sh          # 一鍵 marp → HTML + PDF + PNG
 │   ├── split_slides.py          # 拆 slides.md 為頁面 JSON
 │   ├── plan_subagent_batches.py # 計算 sub-agent 批次
-│   ├── derive_timeline.py       # SRT → timeline.json
+│   ├── derive_timeline.py       # SRT → timeline.json（無聲路徑）
+│   ├── synthesize_tts.py        # TTS：合成旁白 narration.wav 並依真實音訊重算時間軸
 │   └── build_video.py           # 組裝最終 HTML 影片
 └── assets/
     ├── marp/theme.css           # 內建預設投影片主題（4:3 keynote 風格）
@@ -167,7 +197,7 @@ output/<slug>/
 
 ## 路線圖
 
-- [ ] 接 TTS（語音合成）→ 真正的有聲教學影片
+- [x] 接 TTS（語音合成）→ 真正的有聲教學影片（透過本地 IndexTTS-2 MLX，見下節）
 - [ ] 提供額外 marp themes（深色、學術風、簡報風）
 - [ ] 投影片裡的圖示自動產生（如：神經網路示意圖、流程圖）
 - [ ] 匯出 mp4（透過 ffmpeg + headless chromium）

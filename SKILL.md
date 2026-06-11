@@ -24,8 +24,12 @@ Collect these from the user before starting. Only `topic` and `language` are req
 | `subagent_model` | no | `sonnet` | Model passed to each script-generation sub-agent. Must be one of `opus`, `sonnet`, `haiku`; if invalid, fall back to `sonnet` and warn. |
 | `pages_per_subagent` | no | `5` | Number of slides each sub-agent narrates. |
 | `output_dir` | no | `./output` (relative to current working directory) | Parent of the per-topic folder. |
+| `tts` | no | `false` | When true, Phase 4 synthesizes spoken narration (a real voiced video) instead of a silent timer-driven one. |
+| `voice_ref` | required if `tts` | — | Path to a reference speaker `.wav` (the voice to clone). IndexTTS-2 is zero-shot; a few seconds of clean speech is enough. |
+| `emotion_ref` | no | (uses `voice_ref`) | Optional separate `.wav` whose emotion drives the delivery. |
+| `indextts2_dir` | no | `$INDEXTTS2_DIR` | Path to the IndexTTS-2 MLX checkout (provides the CLI binary + models). Required when `tts` is true unless `$INDEXTTS2_DIR` is set. |
 
-To gather missing values, use `AskUserQuestion` with the exact field names. For `topic` and `language`, accept free-form text; for `subagent_model`, offer `opus`/`sonnet`/`haiku` chips.
+To gather missing values, use `AskUserQuestion` with the exact field names. For `topic` and `language`, accept free-form text; for `subagent_model`, offer `opus`/`sonnet`/`haiku` chips. If the user asks for a voiced video (`tts`), confirm `voice_ref` — there is no default voice.
 
 ## Output Layout
 
@@ -41,6 +45,8 @@ All artefacts live under one folder per topic:
 ├── .slides.json              # Internal: parsed pages + overlays
 ├── scripts/01.srt …          # Phase 3 per-page SRT
 ├── timeline.json             # Phase 4 derived global timeline
+├── narration.wav             # Phase 4 (TTS only) spoken narration track
+├── .tts_segments/            # Phase 4 (TTS only) per-cue wavs + combined.srt
 ├── video/                    # Phase 4 player (open index.html)
 └── .state.json               # Resumable state marker
 ```
@@ -76,12 +82,19 @@ The SRT format and overlay-tagging contract live in `references/srt-and-timing.m
 
 ### Phase 4 — Video
 
-1. Run `python3 scripts/derive_timeline.py <output_dir>/<slug>/scripts <output_dir>/<slug>/.slides.json <output_dir>/<slug>/timeline.json` to produce a global timeline. The script joins per-page SRT (each starting at `00:00:00,000`) into a single timeline and resolves `[overlay:id]` markers to absolute start/end times.
-2. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template.
-3. The player auto-advances slides per timeline, fades overlays in/out, and provides play/pause/seek/speed. An `<audio>` slot is reserved for future TTS — when no audio file is present, the player runs on its internal clock.
-4. Tell the user to open `<output_dir>/<slug>/video/index.html` in a browser.
+Build the global timeline. **Choose one of two paths depending on `tts`:**
 
-Player internals, timing model, and audio slot extension points: see `references/player-architecture.md`.
+**4a. Silent (default, `tts` = false).** Run `python3 scripts/derive_timeline.py <output_dir>/<slug>/scripts <output_dir>/<slug>/.slides.json <output_dir>/<slug>/timeline.json` to produce a global timeline. The script joins per-page SRT (each starting at `00:00:00,000`) into a single timeline and resolves `[overlay:id]` markers to absolute start/end times.
+
+**4b. Voiced (`tts` = true).** Run `python3 scripts/synthesize_tts.py <output_dir>/<slug> --ref <voice_ref> [--emo-ref <emotion_ref>] [--indextts2-dir <dir>]`. This **replaces** `derive_timeline.py`: it synthesizes each cue with IndexTTS-2 (one batched `--srt` call), writes `<slug>/narration.wav`, and rebuilds `timeline.json` so slide/overlay times match the *real* spoken audio (not the sub-agents' estimated SRT timestamps). It strips `[overlay:*]` markers before speaking and reuses the same overlay contract. For Traditional Chinese it auto-converts the spoken text to Simplified via `opencc` (`--zh-convert`, default `auto`), because IndexTTS-2's tokenizer is Simplified-only — slides and SRT keep their Traditional text. Synthesis is compute-heavy (minutes); pass `--seed N` for reproducible audio. Do **not** also run `derive_timeline.py` — it would overwrite the audio-accurate timeline.
+
+Then, for both paths:
+
+1. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template. If `narration.wav` is present (path 4b), it is also copied into `video/`.
+2. The player auto-advances slides per timeline, fades overlays in/out, and provides play/pause/seek/speed. When `narration.wav` is present the player uses it as the master clock (audio mode); otherwise it runs on its internal timer.
+3. Tell the user to open `<output_dir>/<slug>/video/index.html` in a browser.
+
+Player internals, timing model, and the TTS audio path: see `references/player-architecture.md`.
 
 ## Resume vs. redo
 
@@ -108,8 +121,9 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 - `scripts/compile_marp.sh` — invokes `npx @marp-team/marp-cli` to emit HTML, PDF, and per-page PNG.
 - `scripts/split_slides.py` — parses `slides.md` into a structured JSON of pages and overlays.
 - `scripts/plan_subagent_batches.py` — splits page list into batches sized by `pages_per_subagent`.
-- `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times.
-- `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline.
+- `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times (silent path).
+- `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.wav`, and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
+- `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline (and `narration.wav` if present).
 
 ### Assets (copied into output)
 
@@ -125,3 +139,5 @@ Verify availability before starting; halt with a clear instruction to install if
 - `node` and `npx` (for `@marp-team/marp-cli`; first run will auto-install).
 - `python3` (for the bundled scripts; standard library only — no `pip install` required).
 - A modern browser to view the player. PDF export uses marp-cli's built-in chromium download.
+- **Only when `tts` is enabled:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`, plus a `voice_ref` `.wav`. If the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Debug` in that checkout). The skill works fully without this — only the voiced path needs it.
+- **For Traditional Chinese narration with TTS:** `opencc` on PATH (`brew install opencc`) so the spoken text can be converted to Simplified (IndexTTS-2 is Simplified-only). Without it, `synthesize_tts.py` warns and proceeds, but Traditional characters will be mispronounced.

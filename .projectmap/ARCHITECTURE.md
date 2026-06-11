@@ -18,8 +18,9 @@ Everything runs locally — no external plugins or services.
 - `scripts/compile_marp.sh` — `slides.md` → `slides.html` + `slides.pdf` + per-page PNGs (wraps marp-cli).
 - `scripts/split_slides.py` — `slides.md` → `.slides.json` (pages + overlays).
 - `scripts/plan_subagent_batches.py` — `.slides.json` → narration batch plan (stdout JSON).
-- `scripts/derive_timeline.py` — per-page SRTs + `.slides.json` → global `timeline.json`.
-- `scripts/build_video.py` — `timeline.json` + slide PNGs → playable `video/index.html`.
+- `scripts/derive_timeline.py` — per-page SRTs + `.slides.json` → global `timeline.json` (silent path).
+- `scripts/synthesize_tts.py` — voiced path: IndexTTS-2 narration → `narration.wav` + audio-accurate `timeline.json` (replaces derive_timeline).
+- `scripts/build_video.py` — `timeline.json` + slide PNGs (+ `narration.wav`) → playable `video/index.html`.
 
 ## Build / test
 No automated test suite. The scripts are stdlib-only Python (≥ 3.8, no `pip install`);
@@ -51,5 +52,5 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 | Module | Files | Doc | One-liner |
 |---|---|---|---|
 | `assets/player` | 1 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`. |
-| `scripts` | 4 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video). |
+| `scripts` | 5 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video). |
 <!-- projectmap:modules:end -->

@@ -32,13 +32,23 @@ python3 scripts/split_slides.py output/<slug>/slides.md output/<slug>/.slides.js
 # Phase 3 — plan how pages split across parallel narration sub-agents (prints JSON)
 python3 scripts/plan_subagent_batches.py output/<slug>/.slides.json 5
 
-# Phase 4 — fold per-page SRTs + slide metadata into one global timeline
+# Phase 4 — fold per-page SRTs + slide metadata into one global timeline (SILENT path)
 python3 scripts/derive_timeline.py output/<slug>/scripts output/<slug>/.slides.json output/<slug>/timeline.json
 
-# Phase 4 — assemble the browser player (copies assets/player/*, injects timeline)
+# Phase 4 — VOICED path (replaces derive_timeline): synthesize narration via IndexTTS-2,
+# write narration.wav, and rebuild timeline.json from the real audio. Needs a built
+# IndexTTS-2 MLX CLI (Apple Silicon) + a reference voice. Compute-heavy (minutes).
+python3 scripts/synthesize_tts.py output/<slug> --ref voice.wav --indextts2-dir "$INDEXTTS2_DIR"
+
+# Phase 4 — assemble the browser player (copies assets/player/*, injects timeline,
+# and copies narration.wav into video/ if present)
 python3 scripts/build_video.py output/<slug>
 # then open output/<slug>/video/index.html
 ```
+
+The silent and voiced timeline producers are **mutually exclusive** — run exactly one before
+`build_video.py`. `synthesize_tts.py` emits its own audio-accurate `timeline.json`, so running
+`derive_timeline.py` afterwards would clobber it with SRT-estimated times.
 
 All Python scripts are **stdlib-only** (≥ 3.8, no `pip install`). To smoke-test one in
 isolation, run it with no args — each prints its own usage and exits `2`.
@@ -56,17 +66,25 @@ format means updating its producer and consumer together:
    handoff from the marp deck to the narration sub-agents.
 3. **per-page SRT** (`scripts/NN.srt`): each file starts at `00:00:00,000` (page-local time).
    Sub-agents wrap the narrated sentences for an overlay in `[overlay:id]` … `[/overlay:id]`.
-4. **`timeline.json`**: `derive_timeline.py` concatenates page durations (page N's global start =
-   sum of prior page durations; default 20s when a page's SRT is missing/empty) to convert all
-   page-local times to **absolute** times, and resolves each `[overlay:*]` marker pair to
-   absolute `{start, end}`. `find_overlay_times` takes the opener cue's start and the closer
-   cue's end.
+4. **`timeline.json`**: produced one of two ways, both honoring the same overlay contract:
+   - **Silent** — `derive_timeline.py` concatenates page durations (page N's global start =
+     sum of prior page durations; default 20s when a page's SRT is missing/empty) to convert all
+     page-local times to **absolute** times, resolving each `[overlay:*]` pair via
+     `find_overlay_times` (opener cue's start, closer cue's end).
+   - **Voiced** — `synthesize_tts.py` instead measures the **real** synthesized audio: page/
+     overlay times come from where each cue actually lands in `narration.wav`, slide windows are
+     kept contiguous, and it adds an `"audio": "narration.wav"` field. It strips `[overlay:*]`
+     markers before speaking and reuses `derive_timeline`'s `parse_srt`/overlay regexes. It also
+     converts the spoken text **Traditional→Simplified via `opencc`** (`--zh-convert`, default
+     `auto`) — IndexTTS-2's tokenizer is Simplified-only, so Traditional chars are out-of-vocab
+     and mispronounced. Only the audio's input is converted; slides/SRT stay Traditional.
 5. **player** (`assets/player/player.js`): consumes the `TIMELINE` global, switches slide
    `<img>`s and fades overlay badges in/out at those absolute times.
 
 `build_video.py` injects the timeline into `assets/player/index.html` by replacing the
 `/* __TIMELINE__ */` placeholder and rewrites slide image paths from `slides.images/NN.png`
-to `slides/NN.png` (it symlinks the PNG dir into `video/`).
+to `slides/NN.png` (it **copies** the PNGs into `video/slides/` so `video/` is self-contained —
+a symlink breaks when the folder is opened from cloud storage like Google Drive).
 
 ## Conventions and gotchas
 
@@ -76,9 +94,11 @@ to `slides/NN.png` (it symlinks the PNG dir into `video/`).
 - **Script CLI shape:** each Python tool is `main(argv) -> int` with exit codes `2` = usage,
   `1` = runtime error, `0` = ok; progress prints `[<name>] …` to stdout, warnings/errors to
   stderr. `derive_timeline.py` warns (not fails) on a missing/empty page SRT.
-- **The player has two clocks:** it prefers a `<audio>` narration track (`tryAudio`, 1.5s
+- **The player has two clocks:** it prefers the `<audio>` narration track (`tryAudio`, 1.5s
   detection timeout) and falls back to a `requestAnimationFrame` timer when no audio is present.
-  The `<audio>` slot is the reserved extension point for future TTS — keep it intact.
+  The track is `video/narration.wav`, produced by the voiced Phase 4 path; the silent path
+  leaves it absent so the player stays on the timer. `assets/player/index.html` hardcodes
+  `<source src="narration.wav">` — keep that filename in sync with `build_video.py`.
 - **Resume vs redo:** `output/<slug>/.state.json` records completed phases. On re-invocation the
   skill resumes from the first incomplete phase unless the user explicitly asks to redo one; the
   exact downstream-invalidation rules are the redo table in `references/workflow.md`.

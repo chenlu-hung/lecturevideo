@@ -108,3 +108,11 @@ split_pages	scripts/split_slides.py	39;"	function	typeref:typename:tuple[str,lis
 extract_overlays	scripts/split_slides.py	84;"	function	typeref:typename:list[dict]
 to_plain_text	scripts/split_slides.py	112;"	function	typeref:typename:str
 main	scripts/split_slides.py	120;"	function	typeref:typename:int
+SCRIPT_DIR	scripts/synthesize_tts.py	43;"	variable
+strip_markers	scripts/synthesize_tts.py	52;"	function	typeref:typename:str
+parse_args	scripts/synthesize_tts.py	59;"	function	typeref:typename:argparse.Namespace
+resolve_indextts2	scripts/synthesize_tts.py	88;"	function	typeref:typename:tuple[Path,Path,Path]
+main	scripts/synthesize_tts.py	106;"	function	typeref:typename:int
+seg_path	scripts/synthesize_tts.py	189;"	function	function:main	typeref:typename:Path	file:
+t	scripts/synthesize_tts.py	253;"	function	function:main	typeref:typename:float	file:
+_find_overlay_cues	scripts/synthesize_tts.py	305;"	function

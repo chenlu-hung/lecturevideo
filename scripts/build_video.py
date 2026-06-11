@@ -47,17 +47,16 @@ def main(argv: list[str]) -> int:
     video_dir = topic_dir / "video"
     video_dir.mkdir(parents=True, exist_ok=True)
     video_slides_dir = video_dir / "slides"
-    if video_slides_dir.exists() and not video_slides_dir.is_symlink():
-        shutil.rmtree(video_slides_dir)
-    elif video_slides_dir.is_symlink():
+    if video_slides_dir.is_symlink() or video_slides_dir.is_file():
         video_slides_dir.unlink()
+    elif video_slides_dir.exists():
+        shutil.rmtree(video_slides_dir)
 
-    # Symlink slide images so updates flow through without copying. Fall back
-    # to copying on systems where symlinks fail (e.g. some Windows setups).
-    try:
-        video_slides_dir.symlink_to(images_src, target_is_directory=True)
-    except OSError:
-        shutil.copytree(images_src, video_slides_dir)
+    # Copy (not symlink) the slide images so video/ is self-contained. A symlink
+    # breaks when video/ is opened from cloud-synced storage (Google Drive / Dropbox
+    # / iCloud) or moved/shared — the browser can't resolve it and the stage goes
+    # blank. The PNGs are small, so copying is cheap and robust.
+    shutil.copytree(images_src, video_slides_dir)
 
     # Copy player.css and player.js verbatim.
     for fname in ("player.css", "player.js"):
@@ -66,6 +65,17 @@ def main(argv: list[str]) -> int:
             print(f"ERROR: missing asset {src}", file=sys.stderr)
             return 1
         shutil.copy2(src, video_dir / fname)
+
+    # Narration audio (optional): produced by synthesize_tts.py. When present the player
+    # runs in audio mode; when absent it falls back to its internal timer clock. Always
+    # reconcile the video/ copy so a stale track from a previous TTS run is not left behind.
+    narration_src = topic_dir / "narration.wav"
+    narration_dst = video_dir / "narration.wav"
+    if narration_src.is_file():
+        shutil.copy2(narration_src, narration_dst)
+        print(f"[build_video] included narration audio ({narration_src.name})")
+    elif narration_dst.exists():
+        narration_dst.unlink()
 
     # Inject timeline into index.html.
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))

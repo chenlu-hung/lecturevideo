@@ -15,8 +15,8 @@ How the bundled `assets/player/` works and how `build_video.py` wires it up. Rea
   <img id="slide" src="slides/01.png">      <!-- current slide image -->
   <div id="overlays"></div>                  <!-- overlay <div>s rendered here -->
 </div>
-<audio id="narration" preload="metadata">    <!-- empty src in v0; future TTS -->
-  <source src="audio.mp3" type="audio/mpeg">
+<audio id="narration" preload="metadata">    <!-- narration.wav present iff the TTS phase ran -->
+  <source src="narration.wav" type="audio/wav">
 </audio>
 <div id="controls">
   <button id="play">▶</button>
@@ -28,11 +28,14 @@ How the bundled `assets/player/` works and how `build_video.py` wires it up. Rea
 
 ## Timeline data
 
-`timeline.json` (produced by `derive_timeline.py`) shape:
+`timeline.json` (produced by `derive_timeline.py`, or by `synthesize_tts.py` when TTS is
+enabled — the latter adds an `"audio": "narration.wav"` field and times everything against
+the real synthesized audio) shape:
 
 ```json
 {
   "total_duration": 312.4,
+  "audio": "narration.wav",
   "slides": [
     {"index": 1, "start": 0.0, "end": 32.5, "image": "slides.images/01.png"},
     {"index": 2, "start": 32.5, "end": 71.2, "image": "slides.images/02.png"}
@@ -97,16 +100,28 @@ CSS handles the fade:
 
 The overlay text shown is the `label` from `.slides.json`. The position (top-right by default) can be customised by adding a `position: <region>` field to the overlay annotation in slides.md and propagating it through `split_slides.py` and `build_video.py`.
 
-## Adding TTS audio later (future extension)
+## TTS audio (implemented — `synthesize_tts.py`)
 
-When a future TTS phase becomes part of the skill:
+The TTS phase is wired up via `scripts/synthesize_tts.py`, which drives the IndexTTS-2
+MLX-Swift engine. It replaces `derive_timeline.py` in the audio path and works exactly as the
+old "future extension" note anticipated — pacing is taken from the real audio, not the
+planned SRT timestamps:
 
-1. Generate per-cue audio chunks by feeding each SRT cue text to the TTS engine.
-2. Concatenate (with optional per-page silence) into `audio.mp3`.
-3. Place at `<output>/<slug>/video/audio.mp3`.
-4. The player auto-detects on next load and switches to audio mode.
+1. Each page's SRT cues are flattened to one globally-indexed list; `[overlay:*]` markers are
+   stripped from the spoken text (they are timing metadata, not narration).
+2. All cues are synthesized in a **single** `indextts2 --srt` batch call (the model loads once
+   per process, so per-cue invocations would be ruinously slow). Output is one
+   `combined_<NNN>.wav` per cue.
+3. The per-cue wavs are concatenated with stdlib `wave` into `<slug>/narration.wav`
+   (16-bit PCM mono 22.05 kHz), inserting `--cue-gap` silence between cues and `--page-gap`
+   between pages.
+4. `timeline.json` is rebuilt from the **actual** frame offsets: each slide's window spans its
+   page's audio (slide windows kept contiguous so the player never lands in a gap), and each
+   overlay's start/end come from where its opener/closer cue landed in the audio.
 
-If TTS pacing diverges from the planned SRT timing, regenerate `timeline.json` from the actual audio: each cue's `audio_offset` overrides the planned timestamp, and slide / overlay times are recomputed from `audio_offset`. This keeps narration and visuals locked.
+`build_video.py` then copies `narration.wav` into `video/` and the player auto-detects it on
+load. Because the timeline is derived from the same audio, `audio.duration ≈
+TIMELINE.total_duration` by construction.
 
 ## Browser compatibility
 
@@ -122,4 +137,5 @@ Tested mental model: any Chromium-based browser, Safari 15+, Firefox 90+.
 
 - Overlay never appears: check `console.log(TIMELINE.overlays)` — if missing, `derive_timeline.py` did not parse the markers. Inspect the SRT for unbalanced `[overlay:*]` tags.
 - Slides advance too fast: usually means a per-page SRT was empty or malformed; `derive_timeline.py` falls back to a default 20-second slide. Re-run the failing sub-agent.
-- Audio drifts from slides: confirm `audio.duration` matches `TIMELINE.total_duration` within 1%. If not, regenerate `timeline.json` from the audio (future TTS hook).
+- Audio drifts from slides: confirm `audio.duration` matches `TIMELINE.total_duration` within 1%. With `synthesize_tts.py` they are derived from the same audio and should match by construction; a mismatch usually means `narration.wav` was rebuilt without re-running `build_video.py` (or vice versa) — re-run both.
+- No audio / player stuck in timer mode: confirm `video/narration.wav` exists. The TTS phase writes `<slug>/narration.wav`; `build_video.py` only copies it in if it is present at build time, so run `synthesize_tts.py` **before** `build_video.py`.
