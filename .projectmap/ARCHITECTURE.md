@@ -41,6 +41,8 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 - **Overlay markers flow:** marp markdown uses `<!-- overlay-begin: id=…, label="…" -->` /
   `<!-- overlay-end: id=… -->`; narration SRT uses `[overlay:id]` … `[/overlay:id]`. These
   propagate md → `.slides.json` → `timeline.json` → faded badges in the player.
+  The same SRT cues (markers stripped, original text kept) also become `timeline.captions[]`,
+  which the player shows as a synced subtitle bar (`CC` button / `c` key).
 - **Mathwrite (hand-written math)** rides the same contract with marker ids `<id>.<seg>`:
   `mathwrite-begin/seg/end` comments + a `<div class="mathwrite">` in slides.md; the PNG
   render blanks the div and the player stroke-draws the MathJax SVGs into that region in
