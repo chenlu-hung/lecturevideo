@@ -51,6 +51,12 @@ python3 scripts/synthesize_tts.py output/<slug> --ref voice.wav --indextts2-dir 
 # and copies narration.wav into video/ if present)
 python3 scripts/build_video.py output/<slug>
 # then open output/<slug>/video/index.html
+
+# Phase 5 (optional) — export the built player to MP4. Steps the player frame-by-frame
+# in headless Chrome (raw CDP over Node's built-in WebSocket — no npm deps) and pipes
+# screenshots into ffmpeg (H.264 + AAC). Needs Chrome + ffmpeg. Compute-heavy (minutes).
+node scripts/export_mp4.mjs output/<slug>           # → output/<slug>/video/lecture.mp4
+# defaults: 60fps, size auto from slide aspect (height capped 1080); --fps/--width/--height/--crf to tune
 ```
 
 The silent and voiced timeline producers are **mutually exclusive** — run exactly one before
@@ -58,7 +64,10 @@ The silent and voiced timeline producers are **mutually exclusive** — run exac
 `derive_timeline.py` afterwards would clobber it with SRT-estimated times.
 
 All Python scripts are **stdlib-only** (≥ 3.8, no `pip install`). To smoke-test one in
-isolation, run it with no args — each prints its own usage and exits `2`.
+isolation, run it with no args — each prints its own usage and exits `2`. The one non-Python
+tool is `scripts/export_mp4.mjs` (Node ≥ 22, **no npm deps** — it speaks the Chrome DevTools
+Protocol over Node's built-in `WebSocket`); like the marp wrapper it relies only on tools
+already required elsewhere (Chrome + ffmpeg).
 
 ## Architecture: the cross-format overlay + timing contract
 

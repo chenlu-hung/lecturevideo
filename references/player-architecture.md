@@ -180,6 +180,50 @@ planned SRT timestamps:
 load. Because the timeline is derived from the same audio, `audio.duration ≈
 TIMELINE.total_duration` by construction.
 
+## MP4 export (`scripts/export_mp4.mjs`)
+
+The player doubles as a deterministic frame source for offline MP4 rendering. Because every
+visual is a pure function of `t`, a headless browser can render frame `i` at `t = i/fps` and
+screenshot it — no real-time playback, exact hand-written-math half-stroke states.
+
+The player exposes a hook (installed in `init`, never touched by normal playback):
+
+```js
+window.__lectureExport = {
+  total,                 // total_duration (seconds)
+  slides,                // slide count
+  prepare(),             // hide #controls + black background; returns total
+  renderAt(t) -> Promise // render exactly one frame at t; resolves when settled
+};
+```
+
+`renderAt(t)` pauses any playback, seeks, swaps the slide and **awaits `slide.decode()`** on a
+page change, repaints overlays/mathwrites/captions, awaits `document.fonts.ready`, then waits
+two `requestAnimationFrame`s (with a `setTimeout` guard against headless rAF throttling) so
+stroke-dasharray styles and the mathwrite transform have settled before the screenshot.
+
+`export_mp4.mjs` (Node, **no npm deps**) drives it:
+
+1. Auto-detects Chrome (same candidates as `render_mathwrite.py`), launches it
+   `--headless=new --remote-debugging-port=0`, and parses the DevTools WebSocket URL from
+   stderr. A tiny CDP client (≈40 lines) over Node's built-in `WebSocket` correlates command
+   ids and dispatches events; it attaches to a fresh target with `Target.attachToTarget
+   {flatten:true}` and talks `Page`/`Emulation`/`Runtime` on that session.
+2. Capture size defaults to the **first slide PNG's aspect ratio** (height capped at 1080, so a
+   4:3 deck → 1440×1080, a 16:9 deck → 1920×1080) — never letterboxed. `--width`/`--height`
+   override; dimensions are forced even for `yuv420p`.
+3. `Emulation.setDeviceMetricsOverride` sets the viewport; once `#controls` is hidden the stage
+   fills it exactly. For each of `ceil(total*fps)` frames: `Runtime.evaluate(renderAt(t),
+   awaitPromise:true)` → `Page.captureScreenshot` → the PNG buffer is piped straight into
+   `ffmpeg -f image2pipe` (no temp files unless `--keep-frames`).
+4. ffmpeg encodes `libx264`/`yuv420p` (`-crf 18 -preset medium -movflags +faststart`); if
+   `video/narration.wav` exists it is muxed as AAC with `-shortest` (silent decks export
+   video-only). Output: `<topic>/video/lecture.mp4`.
+
+A real lecture is many thousands of frames, so this is a minutes-long, compute-heavy step (like
+TTS). A future optimisation is to hold static stretches (same slide, no overlay/caption/mathwrite
+change) as repeated frames instead of re-screenshotting every one.
+
 ## Browser compatibility
 
 The player uses only:

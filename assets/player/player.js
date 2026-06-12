@@ -358,6 +358,48 @@
     if (useAudio) audio.playbackRate = s;
   }
 
+  // ---------- deterministic export hook ----------
+  // Renders exactly one frame at absolute time t for offline MP4 capture
+  // (scripts/export_mp4.mjs). Everything the player draws is a pure function of
+  // t, so a headless browser can step frame-by-frame and screenshot without
+  // playing in real time. Returns a promise that resolves once the frame is
+  // visually settled (slide image decoded, fonts ready, stroke styles applied).
+  function exportRenderAt(t) {
+    if (playing) pause();
+    t = Math.max(0, Math.min(TOTAL, t));
+    currentTime = t;
+    const prevIdx = currentSlideIndex;
+    setSlide(findSlide(t));
+    const needDecode = (currentSlideIndex !== prevIdx || !slide.complete) && slide.decode;
+    const decoded = needDecode ? slide.decode().catch(() => {}) : Promise.resolve();
+    return decoded
+      .then(() => {
+        layoutMathwrites();
+        updateOverlays(t);
+        updateMathwrites(t);
+        updateCaptions(t);
+        renderTime(t);
+        return (document.fonts && document.fonts.ready) || Promise.resolve();
+      })
+      .then(() => new Promise((resolve) => {
+        // Two rAFs let stroke-dasharray styles and the mathwrite transform
+        // settle; the timeout guards against headless rAF throttling.
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+        setTimeout(finish, 200);
+      }));
+  }
+
+  // Strip the player chrome so the stage fills the viewport for a clean capture.
+  function exportPrepare() {
+    const controls = $("controls");
+    if (controls) controls.style.display = "none";
+    document.documentElement.style.background = "#000";
+    document.body.style.background = "#000";
+    return TOTAL;
+  }
+
   // ---------- audio detection ----------
   function tryAudio() {
     return new Promise((resolve) => {
@@ -415,6 +457,13 @@
   setCaptions(captionsOn);  // sync button state + paint the t=0 caption
   renderTime(0);
   wire();
+  // Export entry point for the headless capture driver (scripts/export_mp4.mjs).
+  window.__lectureExport = {
+    total: TOTAL,
+    slides: SLIDES.length,
+    prepare: exportPrepare,
+    renderAt: exportRenderAt,
+  };
   // Deep-link: index.html#t=42.5 starts paused at that time.
   const hashT = /[#&]t=([\d.]+)/.exec(location.hash);
   if (hashT && TOTAL > 0) seekTo(parseFloat(hashT[1]) / TOTAL);
