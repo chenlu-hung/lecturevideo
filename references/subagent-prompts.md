@@ -51,12 +51,24 @@ Rules:
 - Markers never nest with the same id.
 - The viewer never sees these markers; they will be stripped during rendering.
 
+# Mathwrite tagging (only when a page lists mathwrite segments)
+Some pages contain a formula that the video hand-writes on screen, segment by segment.
+Each segment has a marker id like `bayes.lhs` and works exactly like an overlay:
+  [overlay:bayes.lhs] ... [/overlay:bayes.lhs]
+Rules:
+- While a segment's markers are open, that part of the formula is being written on
+  screen — narrate like a teacher writing on the board ("我們先寫下…", "Now we write …").
+- Tag the segments in the order listed, each exactly once, back-to-back (the formula is
+  written left to right without long pauses between parts).
+- Give each segment at least one full cue (≥ 3–4 seconds).
+
 # Pages assigned to you (this batch)
 
 {{#each pages}}
 ## Page {{index}}
 **Image**: {{image}}
 **Overlays**: {{#if overlays}}{{#each overlays}}`{{id}}` ({{label}}){{#unless @last}}, {{/unless}}{{/each}}{{else}}(none){{/if}}
+**Mathwrite segments (tag in this order)**: {{#if mathwrites}}{{#each mathwrites}}{{#each segs}}`{{../id}}.{{seg}}` ({{label}}; TeX: {{tex}}){{#unless @last}}, {{/unless}}{{/each}}{{/each}}{{else}}(none){{/if}}
 **Output path**: {{output_path}}
 
 Slide markdown:
@@ -89,6 +101,7 @@ The main agent constructs the per-page sections by reading `.slides.json`. For e
   "index": 7,
   "image": "slides.images/07.png",
   "overlays": [{"id": "chain-rule", "label": "鏈鎖律的角色"}, ...],
+  "mathwrites": [{"id": "bayes", "segs": [{"seg": "lhs", "label": "後驗機率", "tex": "P(\\theta \\mid x)"}, ...]}],
   "output_path": "/abs/path/output/<slug>/scripts/07.srt",
   "raw_md": "# ... slide markdown ..."
 }

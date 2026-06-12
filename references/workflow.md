@@ -160,11 +160,23 @@ The resulting JSON shape:
       "raw_md": "...",
       "plain_text": "...",
       "image": "slides.images/02.png",
-      "overlays": [{"id": "key-insight", "label": "關鍵推論"}]
+      "overlays": [{"id": "key-insight", "label": "關鍵推論"}],
+      "mathwrites": [{"id": "bayes", "segs": [{"seg": "lhs", "label": "後驗機率", "tex": "P(\\theta \\mid x)"}]}]
     }
   ]
 }
 ```
+
+If any page declares mathwrite blocks (hand-written math; grammar in
+`marp-and-overlays.md` §"Mathwrite"), also run:
+
+```bash
+python3 scripts/render_mathwrite.py <output>/<slug>
+```
+
+This renders each segment's TeX to SVG (MathJax via headless Chrome) and measures
+the blanked formula region, writing `.mathwrite.json`. Both timeline producers
+refuse to run without it when mathwrites are declared.
 
 ### 2.6 Mark complete
 
@@ -242,5 +254,6 @@ When the user requests a redo:
 | Rewrite narration for slide N | Re-dispatch one sub-agent for that page → re-run Phase 4 |
 | Adjust overlay timing | Edit the relevant SRT cues → re-run Phase 4 |
 | Change marp theme | Update `marp_template_path` → re-run Phase 2.4 → re-run Phase 4 (slide images change) |
+| Edit a mathwrite formula / its segments | Edit `slides.md` → re-run Phase 2.4–2.5 **and** `render_mathwrite.py` → invalidate `scripts` for that page (seg markers changed), `video` |
 
 In every case, after invalidation rewrite `.state.json` to drop the affected phases from `completed_phases`, then run only the affected steps.

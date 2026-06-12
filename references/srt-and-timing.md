@@ -70,6 +70,9 @@ Rules:
 - Markers must be balanced (each opener has a closer; no nested same-id markers).
 - The markers are stripped before the player displays subtitles, so they will not show up to the viewer.
 - The markers do not affect timestamps — they live inside the cue text.
+- Each cue's text (markers removed, **original script kept**) becomes one entry in
+  `timeline.json`'s `captions[]`, which the player shows as a bottom subtitle bar in sync
+  with playback. Write cue text as clean spoken sentences — it is read aloud *and* shown.
 
 ### Example
 
@@ -98,6 +101,19 @@ Resulting overlay times (after `derive_timeline.py`, assuming this is page 7 sta
 - `chain-rule`: start=188s, end=206s.
 - `lr-tip`: start=206s, end=214s.
 
+## Mathwrite segment tagging
+
+Slides may declare mathwrite blocks (hand-written math; see `marp-and-overlays.md`).
+Each segment behaves exactly like an overlay whose id is `<block-id>.<seg>`:
+
+- Wrap the narration that explains a segment with `[overlay:bayes.lhs]…[/overlay:bayes.lhs]`.
+- While the marker pair is open, the player is **writing that part of the formula on
+  screen**, so narrate as a teacher writing on the board ("我們先寫下後驗機率…",
+  "接著等號右邊是…").
+- Tag the segments **in their declared order**, each exactly once, ideally back-to-back —
+  the formula is written left to right without long pauses.
+- Give each segment at least one full cue (≥ 3–4 seconds) of narration.
+
 ## Validation rules (used by main agent)
 
 A page's SRT is valid iff all of the following hold:
@@ -106,7 +122,9 @@ A page's SRT is valid iff all of the following hold:
 2. Parses as SRT (each cue has index, timestamp line, ≥1 text line, blank separator except after the last cue).
 3. Cue indices are 1, 2, 3, … with no gaps.
 4. Timestamps are monotonic non-decreasing; no cue's `start ≥ end`.
-5. For every overlay id declared in `.slides.json` for this page, the SRT contains exactly one `[overlay:<id>]` opener and one `[/overlay:<id>]` closer.
+5. For every overlay id declared in `.slides.json` for this page — including every
+   mathwrite segment id `<block-id>.<seg>` — the SRT contains exactly one
+   `[overlay:<id>]` opener and one `[/overlay:<id>]` closer.
 6. No stray markers (every opener has a closer; no closers without openers; no nested same-id markers).
 7. Total page duration is in [15, 180] seconds (warn outside, fail outside [5, 300]).
 

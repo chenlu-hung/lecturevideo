@@ -1,7 +1,7 @@
 ---
 name: lecture-video-generator
-description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice.
-version: 0.2.0
+description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", "數學式手寫動畫", "板書動畫", "像老師寫黑板一樣寫公式", "handwritten math animation", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice.
+version: 0.3.0
 ---
 
 # Lecture Video Generator
@@ -42,7 +42,8 @@ All artefacts live under one folder per topic:
 ├── slides.html               # Phase 2 marp HTML
 ├── slides.pdf                # Phase 2 marp PDF
 ├── slides.images/01.png …    # Phase 2 per-page PNG (used by player)
-├── .slides.json              # Internal: parsed pages + overlays
+├── .slides.json              # Internal: parsed pages + overlays + mathwrites
+├── .mathwrite.json           # Internal: per-segment math SVGs + on-slide bboxes
 ├── scripts/01.srt …          # Phase 3 per-page SRT
 ├── timeline.json             # Phase 4 derived global timeline
 ├── narration.wav             # Phase 4 (TTS only) spoken narration track
@@ -70,7 +71,8 @@ Detailed step-by-step procedure, decision tree, and re-do mechanics: see `refere
 1. Read `outline.md`. Resolve `marp_template_path` (default = bundled `assets/marp/theme.css`). Halt if the file does not exist.
 2. Generate `slides.md` using marp syntax following `references/marp-and-overlays.md`. The marp frontmatter, slide separator rules, and overlay annotation grammar are defined there — do not reinvent them.
 3. Run `bash scripts/compile_marp.sh <output_dir>/<slug>/slides.md <marp_template_path> <output_dir>/<slug>` to produce `slides.html`, `slides.pdf`, and `slides.images/NN.png`.
-4. Run `python3 scripts/split_slides.py <output_dir>/<slug>/slides.md <output_dir>/<slug>/.slides.json` to extract per-page text and overlay metadata.
+4. Run `python3 scripts/split_slides.py <output_dir>/<slug>/slides.md <output_dir>/<slug>/.slides.json` to extract per-page text, overlay, and mathwrite metadata.
+5. **Only if the deck declares mathwrite blocks** (hand-written math animation; grammar in `references/marp-and-overlays.md` §"Mathwrite"): run `python3 scripts/render_mathwrite.py <output_dir>/<slug>` to render each formula segment to SVG and measure its on-slide position (needs the same headless Chrome marp uses, plus network access to the MathJax CDN). Use mathwrite for any display formula the narration walks through term by term — the player hand-writes it like a teacher at a whiteboard, synced to the narration.
 
 ### Phase 3 — SRT scripts via parallel sub-agents
 
@@ -119,7 +121,8 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 ### Scripts (run via Bash)
 
 - `scripts/compile_marp.sh` — invokes `npx @marp-team/marp-cli` to emit HTML, PDF, and per-page PNG.
-- `scripts/split_slides.py` — parses `slides.md` into a structured JSON of pages and overlays.
+- `scripts/split_slides.py` — parses `slides.md` into a structured JSON of pages, overlays, and mathwrites.
+- `scripts/render_mathwrite.py` — renders mathwrite segment TeX to SVG (MathJax) and measures each formula's on-slide bbox via headless Chrome; writes `.mathwrite.json`. Only needed when the deck declares mathwrite blocks.
 - `scripts/plan_subagent_batches.py` — splits page list into batches sized by `pages_per_subagent`.
 - `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times (silent path).
 - `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.wav`, and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
@@ -139,5 +142,6 @@ Verify availability before starting; halt with a clear instruction to install if
 - `node` and `npx` (for `@marp-team/marp-cli`; first run will auto-install).
 - `python3` (for the bundled scripts; standard library only — no `pip install` required).
 - A modern browser to view the player. PDF export uses marp-cli's built-in chromium download.
+- **Only when the deck uses mathwrite blocks:** a local Chrome/Chromium/Edge (auto-detected; override with `CHROME_PATH` or `--chrome`) and network access to the MathJax CDN at build time (`--mathjax-url` can point at a local copy).
 - **Only when `tts` is enabled:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`, plus a `voice_ref` `.wav`. If the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Debug` in that checkout). The skill works fully without this — only the voiced path needs it.
 - **For Traditional Chinese narration with TTS:** `opencc` on PATH (`brew install opencc`) so the spoken text can be converted to Simplified (IndexTTS-2 is Simplified-only). Without it, `synthesize_tts.py` warns and proceeds, but Traditional characters will be mispronounced.

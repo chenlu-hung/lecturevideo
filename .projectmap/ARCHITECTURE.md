@@ -16,7 +16,8 @@ Everything runs locally — no external plugins or services.
 ## Entry points
 - `SKILL.md` — the actual skill entry point; defines the phases and orchestrates everything below.
 - `scripts/compile_marp.sh` — `slides.md` → `slides.html` + `slides.pdf` + per-page PNGs (wraps marp-cli).
-- `scripts/split_slides.py` — `slides.md` → `.slides.json` (pages + overlays).
+- `scripts/split_slides.py` — `slides.md` → `.slides.json` (pages + overlays + mathwrites).
+- `scripts/render_mathwrite.py` — mathwrite TeX segments → `.mathwrite.json` (MathJax SVGs + on-slide bboxes via headless Chrome); only needed when the deck declares mathwrite blocks.
 - `scripts/plan_subagent_batches.py` — `.slides.json` → narration batch plan (stdout JSON).
 - `scripts/derive_timeline.py` — per-page SRTs + `.slides.json` → global `timeline.json` (silent path).
 - `scripts/synthesize_tts.py` — voiced path: IndexTTS-2 narration → `narration.wav` + audio-accurate `timeline.json` (replaces derive_timeline).
@@ -40,6 +41,10 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 - **Overlay markers flow:** marp markdown uses `<!-- overlay-begin: id=…, label="…" -->` /
   `<!-- overlay-end: id=… -->`; narration SRT uses `[overlay:id]` … `[/overlay:id]`. These
   propagate md → `.slides.json` → `timeline.json` → faded badges in the player.
+- **Mathwrite (hand-written math)** rides the same contract with marker ids `<id>.<seg>`:
+  `mathwrite-begin/seg/end` comments + a `<div class="mathwrite">` in slides.md; the PNG
+  render blanks the div and the player stroke-draws the MathJax SVGs into that region in
+  sync with narration (see CLAUDE.md "Mathwrite").
 - **Timing:** each per-page SRT starts at `00:00:00,000`; global times are derived by
   concatenating page durations (default 20s when a page's SRT is missing/empty).
 - **Artifacts:** JSON is the interchange format; dotfiles (`.slides.json`, `.state.json`)
@@ -51,6 +56,6 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 
 | Module | Files | Doc | One-liner |
 |---|---|---|---|
-| `assets/player` | 1 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`. |
-| `scripts` | 5 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video). |
+| `assets/player` | 1 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`, incl. time-driven hand-written-math drawing. |
+| `scripts` | 6 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video), plus mathwrite SVG/bbox rendering. |
 <!-- projectmap:modules:end -->

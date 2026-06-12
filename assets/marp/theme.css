@@ -21,7 +21,9 @@
 }
 
 section {
-  width: 1024pt;
+  /* 1023.75pt/768pt = exactly 1365px/1024px — newer Chrome rejects the
+     fractional 1365.33px that a 1024pt width produces during PNG export. */
+  width: 1023.75pt;
   height: 768pt;
   background: #FFFFFF;
   font-family: "Helvetica Light", "Helvetica Neue", "PingFang TC", "PingFang SC", "Noto Sans CJK TC", system-ui, sans-serif;

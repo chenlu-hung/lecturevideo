@@ -9,13 +9,16 @@
 <div id="app">
   <div id="stage">
     <img id="slide" alt="">
+    <div id="mathwrites"></div>
     <div id="overlays"></div>
+    <div id="captions"><span id="caption-text"></span></div>
   </div>
   <audio id="narration" preload="metadata">
     <source src="narration.wav" type="audio/wav">
   </audio>
   <div id="controls">
     <button id="play" type="button" aria-label="Play / Pause">▶</button>
+    <button id="cc" type="button" class="toggle on" aria-label="Toggle captions" aria-pressed="true">CC</button>
     <span id="page-info">— / —</span>
     <input id="seek" type="range" min="0" max="1000" value="0" step="1">
     <span id="time">0:00 / 0:00</span>

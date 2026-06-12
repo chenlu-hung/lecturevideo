@@ -90,6 +90,49 @@ Avoid overlays for:
 - Headings (the slide title should be visible from start).
 - The first bullet on a slide (no narration time before it).
 
+## Mathwrite annotations (hand-written math)
+
+A mathwrite block marks a display formula that the video player **hand-writes like a
+teacher at a whiteboard**, stroke-drawing each segment while the narration explains it.
+The HTML/PDF deck shows the formula normally; only the PNG render (what the player
+shows) blanks it out so the player can draw into the empty space.
+
+### Grammar
+
+```markdown
+<!-- mathwrite-begin: id=bayes -->
+<div class="mathwrite">
+
+$$P(\theta \mid x) \; = \; \frac{P(x \mid \theta)\,P(\theta)}{P(x)}$$
+
+</div>
+<!-- mathwrite-seg: seg=lhs, label="後驗機率", tex="P(\theta \mid x)" -->
+<!-- mathwrite-seg: seg=eq, label="等號", tex="=" -->
+<!-- mathwrite-seg: seg=rhs, label="概似乘先驗除以證據", tex="\frac{P(x \mid \theta)\,P(\theta)}{P(x)}" -->
+<!-- mathwrite-end: id=bayes -->
+```
+
+Rules:
+
+- `id` is kebab-case and **unique across the deck**. A block may not nest or span slides.
+- The `<div class="mathwrite">` wrapper is **required** (exactly one per block), with blank
+  lines around the `$$…$$` so marp still parses the math. It is how the build step locates
+  and blanks the formula; `split_slides.py` rejects a block without it.
+- Each `mathwrite-seg` declares one narration-synced drawing step, **in writing order**:
+  - `seg` — kebab-case, unique within the block. The SRT marker is `[overlay:<id>.<seg>]`.
+  - `label` — short hint for the narration sub-agent (what this segment means).
+  - `tex` — the segment's TeX. Double quotes are not allowed inside; the segments are
+    rendered independently and laid out left-to-right on one baseline, so together they
+    should read as the full formula. **Split only at horizontal seams** (left side / relation
+    sign / right side / appended terms) — never inside a fraction, radical, or matrix.
+- The `$$…$$` inside the div is the authoritative full formula for the handout; keep the
+  seg `tex` values consistent with it.
+- One to two mathwrite blocks per slide at most; each block needs enough narration time
+  (≥ 3–4 seconds per segment) to look like writing rather than flashing.
+
+After compiling, `scripts/render_mathwrite.py <topic_dir>` must run once to render the
+segment SVGs and measure the blanked region (see SKILL.md Phase 2).
+
 ## Default theme reference
 
 The bundled default at `../marp_keynote_template/theme.css` (resolved from the user's working directory) defines:

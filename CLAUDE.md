@@ -26,8 +26,15 @@ Paths below are relative to the repo root.
 # Phase 2 — render marp deck to HTML + PDF + per-page PNG (needs node/npx; auto-installs marp-cli)
 bash scripts/compile_marp.sh output/<slug>/slides.md assets/marp/theme.css output/<slug>
 
-# Phase 2 — parse slides.md into pages + overlay metadata
+# Phase 2 — parse slides.md into pages + overlay/mathwrite metadata
 python3 scripts/split_slides.py output/<slug>/slides.md output/<slug>/.slides.json
+
+# Phase 2 — ONLY when the deck declares mathwrite blocks (hand-written math animation):
+# typeset each segment's TeX to SVG (MathJax CDN) and measure the blanked formula bbox,
+# in one headless-Chrome pass over slides.html (Chrome auto-detected; CHROME_PATH/--chrome
+# to override). Writes .mathwrite.json — both timeline producers refuse to run without it
+# when mathwrites are declared.
+python3 scripts/render_mathwrite.py output/<slug>
 
 # Phase 3 — plan how pages split across parallel narration sub-agents (prints JSON)
 python3 scripts/plan_subagent_batches.py output/<slug>/.slides.json 5
@@ -79,7 +86,28 @@ format means updating its producer and consumer together:
      `auto`) — IndexTTS-2's tokenizer is Simplified-only, so Traditional chars are out-of-vocab
      and mispronounced. Only the audio's input is converted; slides/SRT stay Traditional.
 5. **player** (`assets/player/player.js`): consumes the `TIMELINE` global, switches slide
-   `<img>`s and fades overlay badges in/out at those absolute times.
+   `<img>`s, fades overlay badges in/out, and shows the active **caption** at those absolute
+   times (`CC` button / `c` key toggles the subtitle bar).
+
+Both timeline producers also emit a `captions[]` array — one entry per spoken SRT cue,
+`[overlay:*]` markers stripped, **original** (Traditional) text kept, timed from the same
+source as everything else (SRT-estimated when silent, real audio when voiced). The player
+renders it in a bottom subtitle bar so even a silent deck is followable; the bar works in
+both clock modes. Captions never feed the TTS engine — only the separately Simplified-
+converted spoken text does.
+
+**Mathwrite** (hand-written math animation) rides the same contract with two extras: the
+slides.md grammar is `mathwrite-begin/seg/end` comments around a mandatory
+`<div class="mathwrite">` holding the real `$$…$$` (HTML/PDF keep the formula; the PNG pass
+in `compile_marp.sh` hides the div so the player can write into the blank region). Each
+declared seg is timed exactly like an overlay whose SRT marker id is `<id>.<seg>` (the
+overlay regexes allow dots). `render_mathwrite.py` contributes the per-seg MathJax SVGs and
+the formula bbox via `.mathwrite.json`; `derive_timeline.build_page_mathwrites` merges meta
++ times into `timeline.mathwrites` for both silent and voiced paths. The player draws each
+seg as a pure function of t — sequential per-glyph stroke reveal (`stroke-dasharray` on
+`path[data-c]`/`use[data-c]`, width-grow on `<rect>` rules) then normal fill — so seeking
+lands on the correct half-written state. A seg with missing SRT markers degrades to
+"fully drawn from slide start" (warned, never blank).
 
 `build_video.py` injects the timeline into `assets/player/index.html` by replacing the
 `/* __TIMELINE__ */` placeholder and rewrites slide image paths from `slides.images/NN.png`
@@ -106,6 +134,9 @@ a symlink breaks when the folder is opened from cloud storage like Google Drive)
   are all CJK-friendly.
 - `assets/marp/theme.css` declares theme name `input` and is the default when no
   `marp_template_path` is given; a custom theme must declare its own `/* @theme <name> */`.
+- **Theme width must convert to an integer pixel count** — newer Chrome rejects fractional
+  device-metrics widths during PNG export. That's why the theme is `1023.75pt` (=1365px),
+  not `1024pt` (=1365.33px). Custom themes with pt sizes have the same constraint.
 
 ## Project map
 

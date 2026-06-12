@@ -44,33 +44,60 @@ speedSel	assets/player/player.js	17;"	constant
 audio	assets/player/player.js	18;"	constant
 SLIDES	assets/player/player.js	20;"	constant
 OVERLAYS	assets/player/player.js	21;"	constant
-TOTAL	assets/player/player.js	22;"	constant
-useAudio	assets/player/player.js	24;"	variable
-currentTime	assets/player/player.js	25;"	variable
-playing	assets/player/player.js	26;"	variable
-lastFrame	assets/player/player.js	27;"	variable
-speed	assets/player/player.js	28;"	variable
-currentSlideIndex	assets/player/player.js	29;"	variable
-overlayState	assets/player/player.js	30;"	constant
-overlayEls	assets/player/player.js	31;"	constant
-buildOverlayElements	assets/player/player.js	34;"	function
-findSlide	assets/player/player.js	52;"	function
-setSlide	assets/player/player.js	64;"	function
-updateOverlays	assets/player/player.js	92;"	function
-fmt	assets/player/player.js	111;"	function
-renderTime	assets/player/player.js	118;"	function
-tick	assets/player/player.js	125;"	function
-loop	assets/player/player.js	132;"	function
-play	assets/player/player.js	148;"	function
-pause	assets/player/player.js	157;"	function
-togglePlay	assets/player/player.js	163;"	function
-seekTo	assets/player/player.js	167;"	function
-setSpeed	assets/player/player.js	174;"	function
-tryAudio	assets/player/player.js	180;"	function
-onLoaded	assets/player/player.js	182;"	function	function:tryAudio
-onError	assets/player/player.js	189;"	function	function:tryAudio
-cleanup	assets/player/player.js	190;"	function	function:tryAudio
-wire	assets/player/player.js	204;"	function
+MATHWRITES	assets/player/player.js	22;"	constant
+TOTAL	assets/player/player.js	23;"	constant
+mwRoot	assets/player/player.js	24;"	constant
+useAudio	assets/player/player.js	26;"	variable
+currentTime	assets/player/player.js	27;"	variable
+playing	assets/player/player.js	28;"	variable
+lastFrame	assets/player/player.js	29;"	variable
+speed	assets/player/player.js	30;"	variable
+currentSlideIndex	assets/player/player.js	31;"	variable
+overlayState	assets/player/player.js	32;"	constant
+overlayEls	assets/player/player.js	33;"	constant
+buildOverlayElements	assets/player/player.js	36;"	function
+mwItems	assets/player/player.js	59;"	variable
+x	assets/player/player.js	60;"	property	variable:MW_FALLBACK_BBOX
+y	assets/player/player.js	60;"	property	variable:MW_FALLBACK_BBOX
+w	assets/player/player.js	60;"	property	variable:MW_FALLBACK_BBOX
+h	assets/player/player.js	60;"	property	variable:MW_FALLBACK_BBOX
+MW_FALLBACK_BBOX	assets/player/player.js	60;"	variable
+MW_STROKE_WIDTH	assets/player/player.js	61;"	constant
+buildMathwrites	assets/player/player.js	63;"	function
+anonymousObject22c5511b0105	assets/player/player.js	83;"	variable
+data	assets/player/player.js	83;"	property	variable:anonymousObject22c5511b0105
+box	assets/player/player.js	83;"	property	variable:anonymousObject22c5511b0105
+row	assets/player/player.js	83;"	property	variable:anonymousObject22c5511b0105
+segs	assets/player/player.js	83;"	property	variable:anonymousObject22c5511b0105
+mwCollectNodes	assets/player/player.js	87;"	function
+seg.nodes	assets/player/player.js	89;"	property
+el	assets/player/player.js	98;"	property	variable:nd
+len	assets/player/player.js	98;"	property	variable:nd
+acc	assets/player/player.js	98;"	property	variable:nd
+w0	assets/player/player.js	98;"	property	variable:nd
+nd	assets/player/player.js	98;"	variable
+mwPaintNode	assets/player/player.js	121;"	function
+mwPaintSeg	assets/player/player.js	139;"	function
+layoutMathwrites	assets/player/player.js	155;"	function
+updateMathwrites	assets/player/player.js	185;"	function
+findSlide	assets/player/player.js	199;"	function
+setSlide	assets/player/player.js	211;"	function
+updateOverlays	assets/player/player.js	240;"	function
+fmt	assets/player/player.js	259;"	function
+renderTime	assets/player/player.js	266;"	function
+tick	assets/player/player.js	273;"	function
+loop	assets/player/player.js	281;"	function
+play	assets/player/player.js	297;"	function
+pause	assets/player/player.js	306;"	function
+togglePlay	assets/player/player.js	312;"	function
+seekTo	assets/player/player.js	316;"	function
+setSpeed	assets/player/player.js	323;"	function
+tryAudio	assets/player/player.js	329;"	function
+onLoaded	assets/player/player.js	331;"	function	function:tryAudio
+onError	assets/player/player.js	338;"	function	function:tryAudio
+cleanup	assets/player/player.js	339;"	function	function:tryAudio
+wire	assets/player/player.js	353;"	function
+hashT	assets/player/player.js	382;"	constant
 !_TAG_KIND_DESCRIPTION!Python	c,class	/classes/
 !_TAG_KIND_DESCRIPTION!Python	f,function	/functions/
 !_TAG_KIND_DESCRIPTION!Python	m,member	/class members/
@@ -92,28 +119,44 @@ ASSETS_DIR	scripts/build_video.py	26;"	variable
 TIMELINE_PLACEHOLDER	scripts/build_video.py	28;"	variable
 main	scripts/build_video.py	31;"	function	typeref:typename:int
 TIMESTAMP_RE	scripts/derive_timeline.py	31;"	variable
-OVERLAY_OPEN_RE	scripts/derive_timeline.py	35;"	variable
-OVERLAY_CLOSE_RE	scripts/derive_timeline.py	36;"	variable
-DEFAULT_PAGE_DURATION	scripts/derive_timeline.py	38;"	variable
-parse_timestamp	scripts/derive_timeline.py	41;"	function	typeref:typename:float
-parse_srt	scripts/derive_timeline.py	45;"	function	typeref:typename:list[dict]
-find_overlay_times	scripts/derive_timeline.py	86;"	function	typeref:typename:tuple[float,float]|None
-main	scripts/derive_timeline.py	112;"	function	typeref:typename:int
+OVERLAY_OPEN_RE	scripts/derive_timeline.py	36;"	variable
+OVERLAY_CLOSE_RE	scripts/derive_timeline.py	37;"	variable
+DEFAULT_PAGE_DURATION	scripts/derive_timeline.py	39;"	variable
+parse_timestamp	scripts/derive_timeline.py	42;"	function	typeref:typename:float
+parse_srt	scripts/derive_timeline.py	46;"	function	typeref:typename:list[dict]
+find_overlay_times	scripts/derive_timeline.py	87;"	function	typeref:typename:tuple[float,float]|None
+load_mathwrite_meta	scripts/derive_timeline.py	113;"	function	typeref:typename:dict|None
+FALLBACK_BBOX	scripts/derive_timeline.py	130;"	variable
+build_page_mathwrites	scripts/derive_timeline.py	133;"	function	typeref:typename:list[dict]
+main	scripts/derive_timeline.py	181;"	function	typeref:typename:int
+resolve	scripts/derive_timeline.py	258;"	function	function:main	file:
 main	scripts/plan_subagent_batches.py	25;"	function	typeref:typename:int
+DEFAULT_MATHJAX_URL	scripts/render_mathwrite.py	37;"	variable
+RESULT_RE	scripts/render_mathwrite.py	38;"	variable
+PROBE_SCRIPT	scripts/render_mathwrite.py	40;"	variable
+find_chrome	scripts/render_mathwrite.py	109;"	function	typeref:typename:str|None
+make_unique_ids	scripts/render_mathwrite.py	130;"	function	typeref:typename:str
+main	scripts/render_mathwrite.py	135;"	function	typeref:typename:int
 OVERLAY_BEGIN_RE	scripts/split_slides.py	28;"	variable
 OVERLAY_END_RE	scripts/split_slides.py	32;"	variable
-HTML_COMMENT_RE	scripts/split_slides.py	35;"	variable
-MARKDOWN_TOKEN_RE	scripts/split_slides.py	36;"	variable
-split_pages	scripts/split_slides.py	39;"	function	typeref:typename:tuple[str,list[str]]
-extract_overlays	scripts/split_slides.py	84;"	function	typeref:typename:list[dict]
-to_plain_text	scripts/split_slides.py	112;"	function	typeref:typename:str
-main	scripts/split_slides.py	120;"	function	typeref:typename:int
+MATHWRITE_BEGIN_RE	scripts/split_slides.py	35;"	variable
+MATHWRITE_SEG_RE	scripts/split_slides.py	38;"	variable
+MATHWRITE_END_RE	scripts/split_slides.py	42;"	variable
+MATHWRITE_DIV_RE	scripts/split_slides.py	45;"	variable
+HTML_COMMENT_RE	scripts/split_slides.py	46;"	variable
+MARKDOWN_TOKEN_RE	scripts/split_slides.py	47;"	variable
+split_pages	scripts/split_slides.py	50;"	function	typeref:typename:tuple[str,list[str]]
+extract_overlays	scripts/split_slides.py	95;"	function	typeref:typename:list[dict]
+extract_mathwrites	scripts/split_slides.py	123;"	function	typeref:typename:list[dict]
+to_plain_text	scripts/split_slides.py	173;"	function	typeref:typename:str
+main	scripts/split_slides.py	181;"	function	typeref:typename:int
 SCRIPT_DIR	scripts/synthesize_tts.py	44;"	variable
-strip_markers	scripts/synthesize_tts.py	53;"	function	typeref:typename:str
-parse_args	scripts/synthesize_tts.py	60;"	function	typeref:typename:argparse.Namespace
-to_simplified	scripts/synthesize_tts.py	94;"	function	typeref:typename:list[str]
-resolve_indextts2	scripts/synthesize_tts.py	129;"	function	typeref:typename:tuple[Path,Path,Path]
-main	scripts/synthesize_tts.py	147;"	function	typeref:typename:int
-seg_path	scripts/synthesize_tts.py	235;"	function	function:main	typeref:typename:Path	file:
-t	scripts/synthesize_tts.py	299;"	function	function:main	typeref:typename:float	file:
-_find_overlay_cues	scripts/synthesize_tts.py	351;"	function
+strip_markers	scripts/synthesize_tts.py	55;"	function	typeref:typename:str
+parse_args	scripts/synthesize_tts.py	62;"	function	typeref:typename:argparse.Namespace
+to_simplified	scripts/synthesize_tts.py	96;"	function	typeref:typename:list[str]
+resolve_indextts2	scripts/synthesize_tts.py	131;"	function	typeref:typename:tuple[Path,Path,Path]
+main	scripts/synthesize_tts.py	149;"	function	typeref:typename:int
+seg_path	scripts/synthesize_tts.py	242;"	function	function:main	typeref:typename:Path	file:
+t	scripts/synthesize_tts.py	306;"	function	function:main	typeref:typename:float	file:
+resolve	scripts/synthesize_tts.py	342;"	function	function:main	file:
+_find_overlay_cues	scripts/synthesize_tts.py	374;"	function

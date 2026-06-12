@@ -46,6 +46,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from derive_timeline import (  # noqa: E402  (local sibling module)
     OVERLAY_CLOSE_RE,
     OVERLAY_OPEN_RE,
+    build_page_mathwrites,
+    load_mathwrite_meta,
     parse_srt,
 )
 
@@ -171,6 +173,11 @@ def main(argv: list[str]) -> int:
         return 1
 
     pages = json.loads(slides_json.read_text(encoding="utf-8"))["pages"]
+    try:
+        mw_meta = load_mathwrite_meta(topic_dir, pages)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
     # ---- 1. Flatten every page's cues into one globally-indexed list. ----
     # Each cue gets a global index used both as the combined-SRT entry number and as the
@@ -301,7 +308,25 @@ def main(argv: list[str]) -> int:
 
     timeline_slides = []
     timeline_overlays = []
+    timeline_mathwrites = []
+    timeline_captions = []
     warnings: list[str] = []
+
+    # Captions show the original (Traditional) spoken text at the cue's *real*
+    # audio span — never the Simplified text that was only fed to the engine.
+    for entry in page_cues:
+        for g, cue in entry["cues"]:
+            ctext = strip_markers(cue["text"])
+            if not ctext:
+                continue
+            start_frame, end_frame = real.get(g, (None, None))
+            if start_frame is None:
+                continue
+            timeline_captions.append({
+                "start": t(start_frame),
+                "end": t(end_frame),
+                "text": ctext,
+            })
 
     for pi, entry in enumerate(page_cues):
         page = entry["page"]
@@ -330,17 +355,33 @@ def main(argv: list[str]) -> int:
                 "end": t(end_frame),
             })
 
+        if mw_meta is not None:
+            def resolve(marker: str, _cues=cues, _pstart=page_start[pi]):
+                open_g, close_g = _find_overlay_cues(_cues, marker)
+                if open_g is None or close_g is None:
+                    return None
+                start_frame = real.get(open_g, (_pstart, _pstart))[0]
+                end_frame = real.get(close_g, (start_frame, start_frame))[1]
+                return t(start_frame), t(end_frame)
+
+            timeline_mathwrites.extend(
+                build_page_mathwrites(page, t(page_start[pi]), mw_meta, resolve, warnings)
+            )
+
     timeline = {
         "total_duration": t(total),
         "audio": "narration.wav",
         "slides": timeline_slides,
         "overlays": timeline_overlays,
+        "captions": timeline_captions,
     }
+    if timeline_mathwrites:
+        timeline["mathwrites"] = timeline_mathwrites
     timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[synthesize_tts] wrote {narration_path} ({t(total)}s, {nch}ch/{sw*8}bit/{fr}Hz)")
     print(f"[synthesize_tts] wrote {timeline_path}: {len(timeline_slides)} slides, "
-          f"{len(timeline_overlays)} overlays")
+          f"{len(timeline_overlays)} overlays, {len(timeline_captions)} captions")
     if missing:
         warnings.append(f"{missing} cue(s) had no audio (empty/failed synthesis)")
     for w in warnings:

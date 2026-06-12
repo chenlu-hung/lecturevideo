@@ -51,6 +51,63 @@ html, body {
   pointer-events: none;
 }
 
+/* Hand-written math layer: segment SVGs are stroke-drawn then filled by
+   player.js inside the bbox that the PNG render left blank. */
+#mathwrites {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --mw-ink: #1d1d1f;
+}
+
+.mathwrite-box {
+  position: absolute;
+  overflow: visible;
+}
+
+.mw-row {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  white-space: nowrap;
+  font-size: 40px;
+  color: var(--mw-ink);
+}
+
+.mw-seg svg { overflow: visible; }
+
+/* Subtitle bar: the narration SRT text, shown in sync at the bottom of the
+   stage. Pure overlay (pointer-events none) so it never blocks the slide. */
+#captions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  padding: 0 6%;
+}
+
+#caption-text {
+  max-width: 88%;
+  padding: 8px 18px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: center;
+  border-radius: 8px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  white-space: pre-wrap;
+}
+
+#caption-text:empty { display: none; }
+
+#captions.off { display: none; }
+
 .overlay {
   position: absolute;
   top: 5%;
@@ -100,6 +157,23 @@ html, body {
 }
 
 #controls button:hover { filter: brightness(1.1); }
+
+/* CC toggle: dim when captions are off, accent when on. */
+#controls button.toggle {
+  background: var(--control-bg);
+  color: var(--control-fg);
+  border: 1px solid #30363d;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  opacity: 0.55;
+}
+
+#controls button.toggle.on {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  opacity: 1;
+}
 
 #controls #page-info {
   min-width: 80px;

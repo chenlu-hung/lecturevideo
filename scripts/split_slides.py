@@ -32,6 +32,17 @@ OVERLAY_BEGIN_RE = re.compile(
 OVERLAY_END_RE = re.compile(
     r"<!--\s*overlay-end:\s*id=([a-z0-9-]+)\s*-->", re.IGNORECASE
 )
+MATHWRITE_BEGIN_RE = re.compile(
+    r"<!--\s*mathwrite-begin:\s*id=([a-z0-9-]+)\s*-->", re.IGNORECASE
+)
+MATHWRITE_SEG_RE = re.compile(
+    r"<!--\s*mathwrite-seg:\s*seg=([a-z0-9-]+),\s*label=\"([^\"]+)\",\s*tex=\"([^\"]+)\"\s*-->",
+    re.IGNORECASE,
+)
+MATHWRITE_END_RE = re.compile(
+    r"<!--\s*mathwrite-end:\s*id=([a-z0-9-]+)\s*-->", re.IGNORECASE
+)
+MATHWRITE_DIV_RE = re.compile(r"<div\s+class=\"mathwrite\"\s*>", re.IGNORECASE)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 MARKDOWN_TOKEN_RE = re.compile(r"[#*_`>\-]+")
 
@@ -109,6 +120,56 @@ def extract_overlays(page_md: str) -> list[dict]:
     return overlays
 
 
+def extract_mathwrites(page_md: str) -> list[dict]:
+    """Parse mathwrite blocks: begin → div.mathwrite (with $$math$$) → seg lines → end.
+
+    Returns [{id, segs: [{seg, label, tex}]}]. Raises ValueError on malformed input.
+    The `[overlay:<id>.<seg>]` SRT markers and the player's drawing order both follow
+    the seg declaration order.
+    """
+    events: list[tuple[int, str, re.Match]] = []
+    for kind, regex in (("begin", MATHWRITE_BEGIN_RE),
+                        ("seg", MATHWRITE_SEG_RE),
+                        ("end", MATHWRITE_END_RE)):
+        for m in regex.finditer(page_md):
+            events.append((m.start(), kind, m))
+    events.sort(key=lambda e: e[0])
+
+    mathwrites: list[dict] = []
+    current: dict | None = None
+    for _pos, kind, m in events:
+        if kind == "begin":
+            if current is not None:
+                raise ValueError(
+                    f"mathwrite-begin '{m.group(1)}' inside unclosed mathwrite '{current['id']}'"
+                )
+            current = {"id": m.group(1), "segs": []}
+        elif kind == "seg":
+            if current is None:
+                raise ValueError(f"mathwrite-seg '{m.group(1)}' outside a mathwrite block")
+            seg = m.group(1)
+            if any(s["seg"] == seg for s in current["segs"]):
+                raise ValueError(f"duplicate seg '{seg}' in mathwrite '{current['id']}'")
+            current["segs"].append({"seg": seg, "label": m.group(2), "tex": m.group(3)})
+        else:  # end
+            if current is None or m.group(1) != current["id"]:
+                raise ValueError(f"mathwrite-end '{m.group(1)}' without matching begin")
+            if not current["segs"]:
+                raise ValueError(f"mathwrite '{current['id']}' declares no segs")
+            mathwrites.append(current)
+            current = None
+    if current is not None:
+        raise ValueError(f"mathwrite '{current['id']}' has no mathwrite-end")
+
+    div_count = len(MATHWRITE_DIV_RE.findall(page_md))
+    if div_count != len(mathwrites):
+        raise ValueError(
+            f"found {len(mathwrites)} mathwrite block(s) but {div_count} "
+            f'<div class="mathwrite"> wrapper(s); each block needs exactly one wrapper'
+        )
+    return mathwrites
+
+
 def to_plain_text(page_md: str) -> str:
     """Strip markdown / HTML for sub-agent context (best-effort, not perfect)."""
     text = HTML_COMMENT_RE.sub("", page_md)
@@ -133,9 +194,15 @@ def main(argv: list[str]) -> int:
     _frontmatter, page_texts = split_pages(text)
 
     pages = []
+    seen_mw_ids: set[str] = set()
     for i, page_md in enumerate(page_texts, start=1):
         try:
             overlays = extract_overlays(page_md)
+            mathwrites = extract_mathwrites(page_md)
+            for mw in mathwrites:
+                if mw["id"] in seen_mw_ids:
+                    raise ValueError(f"duplicate mathwrite id '{mw['id']}' (must be deck-unique)")
+                seen_mw_ids.add(mw["id"])
         except ValueError as exc:
             print(f"ERROR on page {i}: {exc}", file=sys.stderr)
             return 1
@@ -146,6 +213,7 @@ def main(argv: list[str]) -> int:
                 "plain_text": to_plain_text(page_md),
                 "image": f"slides.images/{i:02d}.png",
                 "overlays": overlays,
+                "mathwrites": mathwrites,
             }
         )
 

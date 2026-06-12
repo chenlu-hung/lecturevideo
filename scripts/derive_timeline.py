@@ -32,10 +32,23 @@ TIMESTAMP_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*"
     r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})"
 )
-OVERLAY_OPEN_RE = re.compile(r"\[overlay:([a-z0-9-]+)\]")
-OVERLAY_CLOSE_RE = re.compile(r"\[/overlay:([a-z0-9-]+)\]")
+# The id may contain a dot: plain overlays use `id`, mathwrite segments use `id.seg`.
+OVERLAY_OPEN_RE = re.compile(r"\[overlay:([a-z0-9.-]+)\]")
+OVERLAY_CLOSE_RE = re.compile(r"\[/overlay:([a-z0-9.-]+)\]")
 
 DEFAULT_PAGE_DURATION = 20.0  # fallback when SRT missing/empty
+
+
+def strip_overlay_markers(text: str) -> str:
+    """Drop `[overlay:*]`/`[/overlay:*]` markers, keeping the spoken text.
+
+    Used to derive on-screen captions from the narration SRT (the markers drive
+    overlay/mathwrite timing but must never be shown to the viewer). Newlines are
+    collapsed to single spaces so a multi-line cue renders as one caption line.
+    """
+    text = OVERLAY_OPEN_RE.sub("", text)
+    text = OVERLAY_CLOSE_RE.sub("", text)
+    return " ".join(text.split())
 
 
 def parse_timestamp(h: str, m: str, s: str, ms: str) -> float:
@@ -109,6 +122,74 @@ def find_overlay_times(cues: list[dict], overlay_id: str) -> tuple[float, float]
     return open_cue["start"], close_cue["end"]
 
 
+def load_mathwrite_meta(topic_dir: Path, pages: list[dict]) -> dict | None:
+    """Return {(page_index, id): meta} from .mathwrite.json, or None when the deck
+    declares no mathwrites. Raises SystemExit if mathwrites are declared but the
+    rendered metadata is missing (render_mathwrite.py was not run).
+    """
+    if not any(page.get("mathwrites") for page in pages):
+        return None
+    meta_path = topic_dir / ".mathwrite.json"
+    if not meta_path.is_file():
+        raise SystemExit(
+            f"ERROR: deck declares mathwrite blocks but {meta_path} is missing — "
+            "run scripts/render_mathwrite.py first"
+        )
+    data = json.loads(meta_path.read_text(encoding="utf-8"))
+    return {(m["page"], m["id"]): m for m in data.get("mathwrites", [])}
+
+
+FALLBACK_BBOX = {"x": 0.1, "y": 0.35, "w": 0.8, "h": 0.3}
+
+
+def build_page_mathwrites(page: dict, page_start: float, mw_meta: dict,
+                          resolve, warnings: list[str]) -> list[dict]:
+    """Assemble timeline mathwrite entries for one page.
+
+    `resolve(marker_id) -> (global_start, global_end) | None` maps a
+    `[overlay:id.seg]` marker pair to absolute times (SRT-estimated in the
+    silent path, real-audio in the voiced path). A segment whose markers are
+    missing falls back to a zero-length window at the slide start, so the
+    formula still appears (fully drawn) instead of vanishing — the PNG region
+    under it is blank.
+    """
+    idx = page["index"]
+    entries: list[dict] = []
+    for mw in page.get("mathwrites", []):
+        mid = mw["id"]
+        meta = mw_meta.get((idx, mid))
+        if meta is None:
+            warnings.append(f"page {idx}: mathwrite '{mid}' missing from .mathwrite.json — skipped")
+            continue
+        meta_segs = {s["seg"]: s for s in meta["segs"]}
+        bbox = meta.get("bbox") or FALLBACK_BBOX
+        segs: list[dict] = []
+        for seg in mw["segs"]:
+            sid = seg["seg"]
+            rendered = meta_segs.get(sid)
+            if rendered is None:
+                warnings.append(f"page {idx}: mathwrite '{mid}' seg '{sid}' has no rendered SVG — skipped")
+                continue
+            marker = f"{mid}.{sid}"
+            times = resolve(marker)
+            if times is None:
+                warnings.append(
+                    f"page {idx}: mathwrite seg '{marker}' missing/unbalanced [overlay:*] "
+                    "markers in SRT; drawing it instantly at slide start"
+                )
+                times = (page_start, page_start)
+            segs.append({
+                "seg": sid,
+                "svg": rendered["svg"],
+                "valign": rendered.get("valign", "0"),
+                "start": round(times[0], 3),
+                "end": round(times[1], 3),
+            })
+        if segs:
+            entries.append({"slide": idx, "id": mid, "bbox": bbox, "segs": segs})
+    return entries
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print(
@@ -128,8 +209,16 @@ def main(argv: list[str]) -> int:
     slides_data = json.loads(slides_json.read_text(encoding="utf-8"))
     pages = slides_data["pages"]
 
+    try:
+        mw_meta = load_mathwrite_meta(slides_json.parent, pages)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
     timeline_slides = []
     timeline_overlays = []
+    timeline_mathwrites = []
+    timeline_captions = []
     warnings: list[str] = []
 
     cursor = 0.0
@@ -158,6 +247,18 @@ def main(argv: list[str]) -> int:
             }
         )
 
+        for cue in cues:
+            ctext = strip_overlay_markers(cue["text"])
+            if not ctext:
+                continue
+            timeline_captions.append(
+                {
+                    "start": round(global_start + cue["start"], 3),
+                    "end": round(global_start + cue["end"], 3),
+                    "text": ctext,
+                }
+            )
+
         for overlay in page.get("overlays", []):
             oid = overlay["id"]
             label = overlay.get("label", oid)
@@ -178,20 +279,35 @@ def main(argv: list[str]) -> int:
                 }
             )
 
+        if mw_meta is not None:
+            def resolve(marker: str, _cues=cues, _gs=global_start):
+                times = find_overlay_times(_cues, marker)
+                if times is None:
+                    return None
+                return _gs + times[0], _gs + times[1]
+
+            timeline_mathwrites.extend(
+                build_page_mathwrites(page, global_start, mw_meta, resolve, warnings)
+            )
+
         cursor = global_end
 
     timeline = {
         "total_duration": round(cursor, 3),
         "slides": timeline_slides,
         "overlays": timeline_overlays,
+        "captions": timeline_captions,
     }
+    if timeline_mathwrites:
+        timeline["mathwrites"] = timeline_mathwrites
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"[derive_timeline] wrote {out_path}: {len(timeline_slides)} slides, "
-          f"{len(timeline_overlays)} overlays, total {timeline['total_duration']}s")
+          f"{len(timeline_overlays)} overlays, {len(timeline_captions)} captions, "
+          f"total {timeline['total_duration']}s")
     for w in warnings:
         print(f"[derive_timeline] WARN: {w}", file=sys.stderr)
     return 0
