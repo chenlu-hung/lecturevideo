@@ -148,6 +148,85 @@ FALLBACK_BBOX	scripts/derive_timeline.py	142;"	variable
 build_page_mathwrites	scripts/derive_timeline.py	145;"	function	typeref:typename:list[dict]
 main	scripts/derive_timeline.py	193;"	function	typeref:typename:int
 resolve	scripts/derive_timeline.py	283;"	function	function:main	file:
+parseArgs	scripts/export_mp4.mjs	42;"	function
+fps	scripts/export_mp4.mjs	44;"	property	variable:parseArgs.opts
+width	scripts/export_mp4.mjs	44;"	property	variable:parseArgs.opts
+height	scripts/export_mp4.mjs	44;"	property	variable:parseArgs.opts
+crf	scripts/export_mp4.mjs	44;"	property	variable:parseArgs.opts
+preset	scripts/export_mp4.mjs	44;"	property	variable:parseArgs.opts
+out	scripts/export_mp4.mjs	45;"	property	variable:parseArgs.opts
+chrome	scripts/export_mp4.mjs	45;"	property	variable:parseArgs.opts
+ffmpeg	scripts/export_mp4.mjs	45;"	property	variable:parseArgs.opts
+keepFrames	scripts/export_mp4.mjs	45;"	property	variable:parseArgs.opts
+topic	scripts/export_mp4.mjs	45;"	property	variable:parseArgs.opts
+opts	scripts/export_mp4.mjs	43;"	variable	function:parseArgs
+next	scripts/export_mp4.mjs	50;"	function	function:parseArgs
+USAGE	scripts/export_mp4.mjs	71;"	constant
+findChrome	scripts/export_mp4.mjs	78;"	function
+DEFAULT_MAX_HEIGHT	scripts/export_mp4.mjs	93;"	constant
+even	scripts/export_mp4.mjs	94;"	function
+readPngSize	scripts/export_mp4.mjs	96;"	function
+resolveSize	scripts/export_mp4.mjs	108;"	function
+CDP	scripts/export_mp4.mjs	122;"	class
+constructor	scripts/export_mp4.mjs	123;"	method	class:CDP
+_onMessage	scripts/export_mp4.mjs	130;"	method	class:CDP
+on	scripts/export_mp4.mjs	142;"	method	class:CDP
+send	scripts/export_mp4.mjs	146;"	method	class:CDP
+id	scripts/export_mp4.mjs	148;"	property	variable:CDP.send.payload
+method	scripts/export_mp4.mjs	148;"	property	variable:CDP.send.payload
+params	scripts/export_mp4.mjs	148;"	property	variable:CDP.send.payload
+payload	scripts/export_mp4.mjs	148;"	variable	method:CDP.send
+anonymousObjectab939b860105	scripts/export_mp4.mjs	151;"	variable
+resolve	scripts/export_mp4.mjs	151;"	property	variable:anonymousObjectab939b860105
+reject	scripts/export_mp4.mjs	151;"	property	variable:anonymousObjectab939b860105
+connect	scripts/export_mp4.mjs	157;"	function
+anonymousObjectab939b860205	scripts/export_mp4.mjs	160;"	variable
+once	scripts/export_mp4.mjs	160;"	property	variable:anonymousObjectab939b860205
+anonymousObjectab939b860305	scripts/export_mp4.mjs	161;"	variable
+once	scripts/export_mp4.mjs	161;"	property	variable:anonymousObjectab939b860305
+launchChrome	scripts/export_mp4.mjs	166;"	function
+anonymousObjectab939b860405	scripts/export_mp4.mjs	175;"	variable	function:launchChrome
+stdio	scripts/export_mp4.mjs	175;"	property	variable:launchChrome.anonymousObjectab939b860405
+onData	scripts/export_mp4.mjs	177;"	function	function:launchChrome
+anonymousObjectab939b860505	scripts/export_mp4.mjs	180;"	variable	function:launchChrome.onData
+proc	scripts/export_mp4.mjs	180;"	property	variable:launchChrome.onData.anonymousObjectab939b860505
+wsUrl	scripts/export_mp4.mjs	180;"	property	variable:launchChrome.onData.anonymousObjectab939b860505
+sleep	scripts/export_mp4.mjs	188;"	function
+main	scripts/export_mp4.mjs	190;"	function
+anonymousObjectab939b860605	scripts/export_mp4.mjs	211;"	variable	function:main
+recursive	scripts/export_mp4.mjs	211;"	property	variable:main.anonymousObjectab939b860605
+force	scripts/export_mp4.mjs	211;"	property	variable:main.anonymousObjectab939b860605
+anonymousObjectab939b860705	scripts/export_mp4.mjs	211;"	variable	function:main
+recursive	scripts/export_mp4.mjs	211;"	property	variable:main.anonymousObjectab939b860705
+cleanup	scripts/export_mp4.mjs	221;"	function	function:main
+anonymousObjectab939b860805	scripts/export_mp4.mjs	223;"	variable	function:main.cleanup
+recursive	scripts/export_mp4.mjs	223;"	property	variable:main.cleanup.anonymousObjectab939b860805
+force	scripts/export_mp4.mjs	223;"	property	variable:main.cleanup.anonymousObjectab939b860805
+anonymousObjectab939b860905	scripts/export_mp4.mjs	230;"	variable	function:main
+url	scripts/export_mp4.mjs	230;"	property	variable:main.anonymousObjectab939b860905
+anonymousObjectab939b860a05	scripts/export_mp4.mjs	231;"	variable	function:main
+targetId	scripts/export_mp4.mjs	231;"	property	variable:main.anonymousObjectab939b860a05
+flatten	scripts/export_mp4.mjs	231;"	property	variable:main.anonymousObjectab939b860a05
+sess	scripts/export_mp4.mjs	232;"	function	function:main
+anonymousObjectab939b860c05	scripts/export_mp4.mjs	235;"	variable	function:main
+width	scripts/export_mp4.mjs	236;"	property	variable:main.anonymousObjectab939b860c05
+height	scripts/export_mp4.mjs	236;"	property	variable:main.anonymousObjectab939b860c05
+deviceScaleFactor	scripts/export_mp4.mjs	236;"	property	variable:main.anonymousObjectab939b860c05
+mobile	scripts/export_mp4.mjs	236;"	property	variable:main.anonymousObjectab939b860c05
+anonymousObjectab939b860d05	scripts/export_mp4.mjs	240;"	variable	function:main
+url	scripts/export_mp4.mjs	240;"	property	variable:main.anonymousObjectab939b860d05
+anonymousObjectab939b860e05	scripts/export_mp4.mjs	246;"	variable	function:main
+expression	scripts/export_mp4.mjs	247;"	property	variable:main.anonymousObjectab939b860e05
+returnByValue	scripts/export_mp4.mjs	248;"	property	variable:main.anonymousObjectab939b860e05
+anonymousObjectab939b860f05	scripts/export_mp4.mjs	273;"	variable	function:main
+stdio	scripts/export_mp4.mjs	273;"	property	variable:main.anonymousObjectab939b860f05
+writeFrame	scripts/export_mp4.mjs	279;"	function	function:main
+anonymousObjectab939b861005	scripts/export_mp4.mjs	286;"	variable	function:main
+expression	scripts/export_mp4.mjs	287;"	property	variable:main.anonymousObjectab939b861005
+awaitPromise	scripts/export_mp4.mjs	288;"	property	variable:main.anonymousObjectab939b861005
+anonymousObjectab939b861105	scripts/export_mp4.mjs	290;"	variable	function:main
+format	scripts/export_mp4.mjs	290;"	property	variable:main.anonymousObjectab939b861105
+captureBeyondViewport	scripts/export_mp4.mjs	290;"	property	variable:main.anonymousObjectab939b861105
 main	scripts/plan_subagent_batches.py	25;"	function	typeref:typename:int
 DEFAULT_MATHJAX_URL	scripts/render_mathwrite.py	37;"	variable
 RESULT_RE	scripts/render_mathwrite.py	38;"	variable

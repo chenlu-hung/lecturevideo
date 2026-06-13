@@ -1,9 +1,9 @@
 {
-  "generated": "2026-06-13T04:36:27+00:00",
+  "generated": "2026-06-13T04:39:38+00:00",
   "mode": "update",
   "depth": 2,
   "source": "git",
-  "files": 7,
+  "files": 8,
   "modules": {
     "assets/player": {
       "hash": "2213cfa5e3f77f2df3360190c621cca536e81f9bc4a873601d67472ecab0a80a",
@@ -11,8 +11,8 @@
       "doc": "modules/assets__player.md"
     },
     "scripts": {
-      "hash": "a5b7e0248f72af36300238385434f6ce4d48f1ed6dc5db26816c709fa62a2956",
-      "files": 6,
+      "hash": "127d7a7ecef7930e15948ae35cd5dd18480427afc1b9d79acb2e42e945684d95",
+      "files": 7,
       "doc": "modules/scripts.md"
     }
   }

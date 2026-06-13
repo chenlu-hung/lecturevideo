@@ -59,5 +59,5 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 | Module | Files | Doc | One-liner |
 |---|---|---|---|
 | `assets/player` | 1 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`, incl. time-driven hand-written-math drawing and a deterministic frame-export hook for MP4 capture. |
-| `scripts` | 6 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video), plus mathwrite SVG/bbox rendering. |
+| `scripts` | 7 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video), plus mathwrite SVG/bbox rendering and a Node MP4 exporter. |
 <!-- projectmap:modules:end -->
