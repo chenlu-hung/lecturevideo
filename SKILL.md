@@ -1,7 +1,7 @@
 ---
 name: lecture-video-generator
-description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", "數學式手寫動畫", "板書動畫", "像老師寫黑板一樣寫公式", "handwritten math animation", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice.
-version: 0.3.0
+description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", "數學式手寫動畫", "板書動畫", "像老師寫黑板一樣寫公式", "handwritten math animation", "export the lecture video to MP4", "把教學影片轉成 mp4", "把 html 影片轉成 mp4", "把投影片影片轉成 mp4", "匯出 mp4", "輸出成 mp4 檔", "convert the lecture/HTML video to mp4", "render the lecture as an mp4 file", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice, and optionally exported to a standalone MP4 file.
+version: 0.4.0
 ---
 
 # Lecture Video Generator
@@ -49,6 +49,7 @@ All artefacts live under one folder per topic:
 ├── narration.wav             # Phase 4 (TTS only) spoken narration track
 ├── .tts_segments/            # Phase 4 (TTS only) per-cue wavs + combined.srt
 ├── video/                    # Phase 4 player (open index.html)
+│   └── lecture.mp4           # Phase 5 (optional) exported MP4
 └── .state.json               # Resumable state marker
 ```
 
@@ -98,6 +99,17 @@ Then, for both paths:
 
 Player internals, timing model, and the TTS audio path: see `references/player-architecture.md`.
 
+### Phase 5 — MP4 export (optional)
+
+Run only when the user wants a standalone video file (e.g. "export to MP4", "把 html 影片轉成 mp4", "匯出 mp4") rather than the browser player. **Requires Phase 4 to have completed** — it reads the built `video/index.html` (and `video/narration.wav` if the voiced path produced one).
+
+1. Verify `<output_dir>/<slug>/video/index.html` exists. If not, run Phase 4 (`build_video.py`) first.
+2. Run `node scripts/export_mp4.mjs <output_dir>/<slug>`. It steps the player frame-by-frame in headless Chrome (driving Chrome over the DevTools Protocol via Node's built-in `WebSocket` — **no npm install**) and pipes screenshots into `ffmpeg`, producing `<output_dir>/<slug>/video/lecture.mp4` (H.264 + AAC; video-only when there is no narration track). Because the player renders every frame as a pure function of time, the export is deterministic — exact overlay/caption/mathwrite states, no real-time playback.
+3. Defaults: 60 fps, size auto-derived from the slide aspect ratio (height capped at 1080), CRF 18. Tune with `--fps`/`--width`/`--height`/`--crf`/`--preset`; override binaries with `--chrome`/`--ffmpeg`; `--out` to change the path. Export is compute-heavy (minutes for a multi-minute lecture).
+4. Tell the user the resulting `video/lecture.mp4` path.
+
+This phase needs **Node ≥ 22**, a local **Chrome/Chromium** (auto-detected; `--chrome` or `$CHROME_PATH` to override), and **ffmpeg** on PATH. It is purely additive — it never modifies the player or timeline, so it can be run any time after Phase 4 and re-run with different options.
+
 ## Resume vs. redo
 
 On every invocation, read `.state.json` first. Then apply this precedence:
@@ -127,6 +139,7 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 - `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times (silent path).
 - `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.wav`, and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
 - `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline (and `narration.wav` if present).
+- `scripts/export_mp4.mjs` — (optional Phase 5) renders the built player frame-by-frame in headless Chrome and muxes with ffmpeg into `video/lecture.mp4`. Node ≥ 22, no npm deps; needs Chrome + ffmpeg.
 
 ### Assets (copied into output)
 
@@ -142,6 +155,7 @@ Verify availability before starting; halt with a clear instruction to install if
 - `node` and `npx` (for `@marp-team/marp-cli`; first run will auto-install).
 - `python3` (for the bundled scripts; standard library only — no `pip install` required).
 - A modern browser to view the player. PDF export uses marp-cli's built-in chromium download.
+- **Only for Phase 5 (MP4 export):** Node ≥ 22, a local Chrome/Chromium (auto-detected; `--chrome` or `$CHROME_PATH` to override), and `ffmpeg` on PATH. `export_mp4.mjs` has no npm dependencies. The rest of the pipeline works without these — only MP4 export needs them.
 - **Only when the deck uses mathwrite blocks:** a local Chrome/Chromium/Edge (auto-detected; override with `CHROME_PATH` or `--chrome`) and network access to the MathJax CDN at build time (`--mathjax-url` can point at a local copy).
 - **Only when `tts` is enabled:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`, plus a `voice_ref` `.wav`. If the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Debug` in that checkout). The skill works fully without this — only the voiced path needs it.
 - **For Traditional Chinese narration with TTS:** `opencc` on PATH (`brew install opencc`) so the spoken text can be converted to Simplified (IndexTTS-2 is Simplified-only). Without it, `synthesize_tts.py` warns and proceeds, but Traditional characters will be mispronounced.

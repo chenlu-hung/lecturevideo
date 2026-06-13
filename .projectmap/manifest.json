@@ -1,12 +1,12 @@
 {
-  "generated": "2026-06-12T03:27:43+00:00",
+  "generated": "2026-06-13T04:36:27+00:00",
   "mode": "update",
   "depth": 2,
   "source": "git",
   "files": 7,
   "modules": {
     "assets/player": {
-      "hash": "262662be5e04d5d51ff3c9160a4e290ba11d074288c40913ae388d861d6d80a8",
+      "hash": "2213cfa5e3f77f2df3360190c621cca536e81f9bc4a873601d67472ecab0a80a",
       "files": 1,
       "doc": "modules/assets__player.md"
     },

@@ -101,12 +101,20 @@ pause	assets/player/player.js	339;"	function
 togglePlay	assets/player/player.js	345;"	function
 seekTo	assets/player/player.js	349;"	function
 setSpeed	assets/player/player.js	356;"	function
-tryAudio	assets/player/player.js	362;"	function
-onLoaded	assets/player/player.js	364;"	function	function:tryAudio
-onError	assets/player/player.js	371;"	function	function:tryAudio
-cleanup	assets/player/player.js	372;"	function	function:tryAudio
-wire	assets/player/player.js	386;"	function
-hashT	assets/player/player.js	419;"	constant
+exportRenderAt	assets/player/player.js	367;"	function
+finish	assets/player/player.js	388;"	function
+exportPrepare	assets/player/player.js	395;"	function
+tryAudio	assets/player/player.js	404;"	function
+onLoaded	assets/player/player.js	406;"	function	function:tryAudio
+onError	assets/player/player.js	413;"	function	function:tryAudio
+cleanup	assets/player/player.js	414;"	function	function:tryAudio
+wire	assets/player/player.js	428;"	function
+total	assets/player/player.js	462;"	property	property:window.__lectureExport
+slides	assets/player/player.js	463;"	property	property:window.__lectureExport
+prepare	assets/player/player.js	464;"	property	property:window.__lectureExport
+renderAt	assets/player/player.js	465;"	property	property:window.__lectureExport
+window.__lectureExport	assets/player/player.js	461;"	property
+hashT	assets/player/player.js	468;"	constant
 !_TAG_KIND_DESCRIPTION!Python	c,class	/classes/
 !_TAG_KIND_DESCRIPTION!Python	f,function	/functions/
 !_TAG_KIND_DESCRIPTION!Python	m,member	/class members/
