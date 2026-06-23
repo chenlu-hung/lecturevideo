@@ -33,7 +33,7 @@ Slide separator: a line containing only `---` (no leading/trailing whitespace).
 
 ## Overlay annotations
 
-Overlays mark content that appears with a delay during playback, synced to narration. The slide compiles normally — marp does not interpret the annotations. The video player reads them via `.slides.json` and shows them at the right time.
+Overlays mark content that appears with a delay during playback, synced to narration. `compile_marp.sh` **blanks each overlay's region in the slide PNG** and also renders an overlay-visible `NN.reveal.png`; `render_mathwrite.py` measures each overlay's bbox. The player then fades the cropped content **in place** at the overlay's narration window (plus a small top-right badge showing the `label`). So overlay content is hidden until its narration reaches it and then stays put until the slide changes — it is not baked onto the slide from the start. The slide still compiles normally; marp does not interpret the annotation comments.
 
 ### Grammar
 
@@ -90,6 +90,14 @@ Avoid overlays for:
 - Headings (the slide title should be visible from start).
 - The first bullet on a slide (no narration time before it).
 
+### Timing when content appears
+
+Because overlay content is blanked in the slide PNG and revealed at its narration window, an overlay is the tool for **"this should only appear later."** Use it deliberately:
+
+- **A remark or conclusion about a formula** (e.g. "顯然 … ≠ …", "於是得證", "注意右邊正是…") should be an overlay, and its narration must be tagged **after** the formula's last `mathwrite-seg` (see `srt-and-timing.md` §"Remarks about a formula appear after it is written"). The line then appears, in place, only once the formula has finished being hand-written.
+- Once revealed, overlay content **stays until the slide changes** (it does not fade back out when the narration moves on), so it reads like board-work that accumulates.
+- For something that must be on screen from the very start (a given, a definition the slide is about), do **not** wrap it in an overlay — leave it as plain slide content so it is baked into the base PNG.
+
 ## Mathwrite annotations (hand-written math)
 
 A mathwrite block marks a display formula that the video player **hand-writes like a
@@ -132,6 +140,33 @@ Rules:
 
 After compiling, `scripts/render_mathwrite.py <topic_dir>` must run once to render the
 segment SVGs and measure the blanked region (see SKILL.md Phase 2).
+
+## Dense / single-page derivations
+
+When a whole multi-line derivation must stay on one slide (e.g. the user asks to keep one
+formula's derivation together), do **not** reflexively shrink the font to a tiny size —
+the usual culprit for overflow is the theme's default block spacing, not the glyph size.
+The bundled theme sets `p`/`li` margins of `42pt`; six stacked display formulas at that
+spacing run off the bottom long before the font is the problem. Prefer a scoped style that
+**kills the spacing first, then sizes the font to fill the box**:
+
+```markdown
+<style scoped>
+section { font-size: 26pt; padding: 26pt 50pt; }
+h2 { font-size: 34pt; margin: 0 0 8pt 0; }
+p  { font-size: 26pt; margin: 4pt 0; }
+div.mathwrite { margin: 0; }
+.katex-display { margin: 7pt 0 !important; }
+</style>
+```
+
+Then **verify the fit**: after `render_mathwrite.py`, check that the lowest block's
+`bbox.y + bbox.h` in `.mathwrite.json` is `≤ ~0.95` (anything `> 1.0` is drawn off the
+slide). Enlarge or shrink the scoped `font-size` and re-compile until the lines fill the
+slide comfortably without overflowing. Each mathwrite block is hand-written at the size
+that fits **its own** measured box, so an integral-free line (short box) may render a touch
+smaller than lines containing a tall `∫`; that is expected — do not fight it by shrinking
+everything.
 
 ## Default theme reference
 

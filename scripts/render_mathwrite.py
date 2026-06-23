@@ -19,8 +19,9 @@ the same browser marp-cli already needs) and the result JSON is parsed out of
 the dumped DOM. Requires network access for the MathJax CDN unless
 --mathjax-url points at a local copy.
 
-The player later draws these SVGs progressively (stroke-then-fill) inside the
-measured bbox — which compile_marp.sh leaves blank in the PNG render.
+The player later hand-writes these SVGs glyph-by-glyph (a pen nib traces each glyph
+outline while the ink fills in behind it) inside the measured bbox — which
+compile_marp.sh leaves blank in the PNG render.
 """
 from __future__ import annotations
 
@@ -37,14 +38,21 @@ from pathlib import Path
 DEFAULT_MATHJAX_URL = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"
 RESULT_RE = re.compile(r'<pre id="__MW_RESULT__"[^>]*>(.*?)</pre>', re.DOTALL)
 
-PROBE_SCRIPT = """
+# MathJax is only needed to typeset mathwrite segment TeX — overlay-only decks skip
+# it entirely (no network dependency).
+MATHJAX_HEAD = """
 <script>
 window.MathJax = { svg: { fontCache: 'none' }, startup: { typeset: false } };
 </script>
 <script src="__MATHJAX_URL__"></script>
+"""
+
+PROBE_BODY = """
 <script>
 (async () => {
-  const DATA = __MW_DATA__;
+  const DATA = __MW_DATA__;      // mathwrite blocks to measure + typeset
+  const OVS = __OV_DATA__;       // overlay regions to measure
+  const NEED_MJ = __NEED_MJ__;   // whether MathJax was loaded
   const finish = (payload) => {
     const pre = document.createElement('pre');
     pre.id = '__MW_RESULT__';
@@ -52,8 +60,8 @@ window.MathJax = { svg: { fontCache: 'none' }, startup: { typeset: false } };
     document.body.appendChild(pre);
   };
   try {
-    await MathJax.startup.promise;
-    // Force every slide to be laid out and visible so rects are measurable
+    if (NEED_MJ) await MathJax.startup.promise;
+    // Force every slide laid out and visible so rects are measurable
     // (the bespoke template hides inactive slides).
     const style = document.createElement('style');
     style.textContent = [
@@ -64,26 +72,27 @@ window.MathJax = { svg: { fontCache: 'none' }, startup: { typeset: false } };
     document.head.appendChild(style);
 
     const slides = document.querySelectorAll('svg[data-marpit-svg]');
+    const measure = (slideEl, el) => {
+      if (!slideEl || !el) return null;
+      const section = slideEl.querySelector('section');
+      if (!section) return null;
+      const sr = section.getBoundingClientRect();
+      const er = el.getBoundingClientRect();
+      if (sr.width > 0 && sr.height > 0 && er.width > 0) {
+        return { x: (er.left - sr.left) / sr.width, y: (er.top - sr.top) / sr.height,
+                 w: er.width / sr.width, h: er.height / sr.height };
+      }
+      return null;
+    };
+
     const result = [];
     for (const item of DATA) {
-      let bbox = null;
       const slide = slides[item.page - 1];
+      let bbox = null;
       if (slide) {
         const section = slide.querySelector('section');
         const els = section ? section.querySelectorAll('.mathwrite') : [];
-        const el = els[item.ord];
-        if (el && section) {
-          const sr = section.getBoundingClientRect();
-          const er = el.getBoundingClientRect();
-          if (sr.width > 0 && sr.height > 0 && er.width > 0) {
-            bbox = {
-              x: (er.left - sr.left) / sr.width,
-              y: (er.top - sr.top) / sr.height,
-              w: er.width / sr.width,
-              h: er.height / sr.height,
-            };
-          }
-        }
+        bbox = measure(slide, els[item.ord]);
       }
       const segs = [];
       for (const s of item.segs) {
@@ -97,7 +106,20 @@ window.MathJax = { svg: { fontCache: 'none' }, startup: { typeset: false } };
       }
       result.push({ page: item.page, id: item.id, bbox: bbox, segs: segs });
     }
-    finish({ mathwrites: result });
+
+    const ovresult = [];
+    for (const ov of OVS) {
+      const slide = slides[ov.page - 1];
+      let bbox = null;
+      if (slide) {
+        const section = slide.querySelector('section');
+        const el = section ? section.querySelector('.overlay-blank[data-ov="' + ov.id + '"]') : null;
+        bbox = measure(slide, el);
+      }
+      ovresult.push({ page: ov.page, id: ov.id, bbox: bbox });
+    }
+
+    finish({ mathwrites: result, overlays: ovresult });
   } catch (e) {
     finish({ error: String(e && e.stack || e) });
   }
@@ -156,7 +178,10 @@ def main(argv: list[str]) -> int:
 
     topic_dir = Path(positional[0]).resolve()
     slides_json = topic_dir / ".slides.json"
-    slides_html = topic_dir / "slides.html"
+    # Prefer the probe render (overlay divs present, everything visible) emitted by
+    # compile_marp.sh; fall back to slides.html for older compiles.
+    render_html = topic_dir / ".render.html"
+    slides_html = render_html if render_html.is_file() else topic_dir / "slides.html"
     out_path = topic_dir / ".mathwrite.json"
 
     if not slides_json.is_file():
@@ -176,10 +201,12 @@ def main(argv: list[str]) -> int:
                 "id": mw["id"],
                 "segs": [{"seg": s["seg"], "tex": s["tex"]} for s in mw["segs"]],
             })
+    ov_items = [{"page": page["index"], "id": ov["id"]}
+                for page in pages for ov in page.get("overlays", [])]
 
-    if not items:
-        out_path.write_text(json.dumps({"mathwrites": []}), encoding="utf-8")
-        print("[render_mathwrite] no mathwrite blocks declared — wrote empty .mathwrite.json")
+    if not items and not ov_items:
+        out_path.write_text(json.dumps({"mathwrites": [], "overlays": []}), encoding="utf-8")
+        print("[render_mathwrite] no mathwrite/overlay regions declared — wrote empty .mathwrite.json")
         return 0
 
     chrome = find_chrome(chrome_arg)
@@ -188,10 +215,13 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 1
 
-    probe = (slides_html.read_text(encoding="utf-8")
-             + PROBE_SCRIPT
-             .replace("__MATHJAX_URL__", mathjax_url)
-             .replace("__MW_DATA__", json.dumps(items, ensure_ascii=False)))
+    need_mj = bool(items)
+    head = MATHJAX_HEAD.replace("__MATHJAX_URL__", mathjax_url) if need_mj else ""
+    body = (PROBE_BODY
+            .replace("__MW_DATA__", json.dumps(items, ensure_ascii=False))
+            .replace("__OV_DATA__", json.dumps(ov_items, ensure_ascii=False))
+            .replace("__NEED_MJ__", "true" if need_mj else "false"))
+    probe = slides_html.read_text(encoding="utf-8") + head + body
 
     with tempfile.NamedTemporaryFile("w", suffix=".html", dir=topic_dir,
                                      prefix=".mathwrite_probe_", delete=False,
@@ -202,7 +232,8 @@ def main(argv: list[str]) -> int:
     try:
         cmd = [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                "--virtual-time-budget=30000", "--dump-dom", probe_path.as_uri()]
-        print(f"[render_mathwrite] probing {len(items)} mathwrite block(s) via headless Chrome …")
+        print(f"[render_mathwrite] probing {len(items)} mathwrite block(s) + "
+              f"{len(ov_items)} overlay region(s) via headless Chrome …")
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     finally:
         probe_path.unlink(missing_ok=True)
@@ -232,10 +263,17 @@ def main(argv: list[str]) -> int:
                 return 1
             seg["svg"] = make_unique_ids(seg["svg"], f"mw-{mw['id']}-{si}")
 
+    for ov in payload.get("overlays", []):
+        if ov["bbox"] is None:
+            warnings.append(f"page {ov['page']} overlay '{ov['id']}': bbox not measurable; "
+                            "it cannot be revealed in place (and is blanked in the PNG) — "
+                            "check that its content renders to a non-empty box")
+
     out_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     n_segs = sum(len(mw["segs"]) for mw in payload["mathwrites"])
+    n_ov = len(payload.get("overlays", []))
     print(f"[render_mathwrite] wrote {out_path}: {len(payload['mathwrites'])} block(s), "
-          f"{n_segs} segment SVG(s)")
+          f"{n_segs} segment SVG(s), {n_ov} overlay bbox(es)")
     for w in warnings:
         print(f"[render_mathwrite] WARN: {w}", file=sys.stderr)
     return 0

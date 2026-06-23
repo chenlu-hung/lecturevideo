@@ -58,8 +58,8 @@ def main(argv: list[str]) -> int:
     # blank. The PNGs are small, so copying is cheap and robust.
     shutil.copytree(images_src, video_slides_dir)
 
-    # Copy player.css and player.js verbatim.
-    for fname in ("player.css", "player.js"):
+    # Copy player.css, player.js, and the Hershey single-stroke font data verbatim.
+    for fname in ("player.css", "player.js", "hershey-font.js"):
         src = ASSETS_DIR / fname
         if not src.is_file():
             print(f"ERROR: missing asset {src}", file=sys.stderr)

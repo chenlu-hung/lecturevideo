@@ -114,6 +114,22 @@ Each segment behaves exactly like an overlay whose id is `<block-id>.<seg>`:
   the formula is written left to right without long pauses.
 - Give each segment at least one full cue (≥ 3–4 seconds) of narration.
 
+### Remarks about a formula appear after it is written
+
+When a slide hand-writes a formula and then makes a remark or draws a conclusion about
+it (e.g. "顯然，$\frac{d}{dx}(x\sin x)\neq x\cos x$", "注意右邊正是我們要的", "於是得證"),
+the remark must be narrated **entirely after** the formula's final `mathwrite-seg`
+closer — never interleaved before the writing is finished. Concretely:
+
+- Place the remark's cue(s), and any `[overlay:<id>]` window for the remark, strictly
+  after the last `[/overlay:<block-id>.<last-seg>]` of the formula it comments on.
+- The remark reads as the *takeaway once the writing is complete* — the lecturer finishes
+  writing, pauses, then points out what the finished line means.
+
+This keeps the spoken order natural. (Whether the on-slide remark text is *visually*
+withheld until that moment depends on how the slide is authored — see
+`marp-and-overlays.md` §"Timing when content appears".)
+
 ## Validation rules (used by main agent)
 
 A page's SRT is valid iff all of the following hold:

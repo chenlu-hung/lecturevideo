@@ -41,9 +41,10 @@ All artefacts live under one folder per topic:
 ├── slides.md                 # Phase 2 marp source
 ├── slides.html               # Phase 2 marp HTML
 ├── slides.pdf                # Phase 2 marp PDF
-├── slides.images/01.png …    # Phase 2 per-page PNG (used by player)
+├── slides.images/01.png …    # Phase 2 per-page PNG, player base (mathwrite+overlay blanked)
+├── slides.images/01.reveal.png … # Phase 2 overlay-visible crop source (decks with overlays)
 ├── .slides.json              # Internal: parsed pages + overlays + mathwrites
-├── .mathwrite.json           # Internal: per-segment math SVGs + on-slide bboxes
+├── .mathwrite.json           # Internal: per-segment math SVGs + mathwrite/overlay bboxes
 ├── scripts/01.srt …          # Phase 3 per-page SRT
 ├── timeline.json             # Phase 4 derived global timeline
 ├── narration.wav             # Phase 4 (TTS only) spoken narration track
@@ -71,9 +72,9 @@ Detailed step-by-step procedure, decision tree, and re-do mechanics: see `refere
 
 1. Read `outline.md`. Resolve `marp_template_path` (default = bundled `assets/marp/theme.css`). Halt if the file does not exist.
 2. Generate `slides.md` using marp syntax following `references/marp-and-overlays.md`. The marp frontmatter, slide separator rules, and overlay annotation grammar are defined there — do not reinvent them.
-3. Run `bash scripts/compile_marp.sh <output_dir>/<slug>/slides.md <marp_template_path> <output_dir>/<slug>` to produce `slides.html`, `slides.pdf`, and `slides.images/NN.png`.
+3. Run `bash scripts/compile_marp.sh <output_dir>/<slug>/slides.md <marp_template_path> <output_dir>/<slug>` to produce `slides.html`, `slides.pdf`, and the player PNGs. The base `slides.images/NN.png` has mathwrite formulas **and** overlay content blanked (so the player animates them in at narration time, not from slide-load); when the deck has overlays it also emits `slides.images/NN.reveal.png` (overlays visible) that the player crops the revealed content from. The HTML/PDF handout keeps everything visible.
 4. Run `python3 scripts/split_slides.py <output_dir>/<slug>/slides.md <output_dir>/<slug>/.slides.json` to extract per-page text, overlay, and mathwrite metadata.
-5. **Only if the deck declares mathwrite blocks** (hand-written math animation; grammar in `references/marp-and-overlays.md` §"Mathwrite"): run `python3 scripts/render_mathwrite.py <output_dir>/<slug>` to render each formula segment to SVG and measure its on-slide position (needs the same headless Chrome marp uses, plus network access to the MathJax CDN). Use mathwrite for any display formula the narration walks through term by term — the player hand-writes it like a teacher at a whiteboard, synced to the narration.
+5. **If the deck declares mathwrite blocks or overlays**: run `python3 scripts/render_mathwrite.py <output_dir>/<slug>` to render each mathwrite segment to SVG and measure the on-slide bbox of every mathwrite block **and** every overlay region; writes `.mathwrite.json`. Needs the same headless Chrome marp uses; the MathJax CDN is only required when there are mathwrite blocks (overlay-only decks skip it). These bboxes let the player hand-write formulas and **reveal overlay content in place** at narration time — so skipping this step on a deck with overlays would leave their content blanked and unrevealed. Use mathwrite for any display formula the narration walks through term by term — the player hand-writes it like a teacher at a whiteboard, synced to the narration (grammar in `references/marp-and-overlays.md` §"Mathwrite").
 
 ### Phase 3 — SRT scripts via parallel sub-agents
 
@@ -94,7 +95,7 @@ Build the global timeline. **Choose one of two paths depending on `tts`:**
 Then, for both paths:
 
 1. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template. If `narration.wav` is present (path 4b), it is also copied into `video/`.
-2. The player auto-advances slides per timeline, fades overlays in/out, and provides play/pause/seek/speed. When `narration.wav` is present the player uses it as the master clock (audio mode); otherwise it runs on its internal timer.
+2. The player auto-advances slides per timeline and provides play/pause/seek/speed. Overlay content is **revealed in place** at its narration window (cropped from `NN.reveal.png` over the blanked base) and stays until the slide changes; a small top-right badge also fades in/out as a highlight. When `narration.wav` is present the player uses it as the master clock (audio mode); otherwise it runs on its internal timer.
 3. Tell the user to open `<output_dir>/<slug>/video/index.html` in a browser.
 
 Player internals, timing model, and the TTS audio path: see `references/player-architecture.md`.
@@ -104,8 +105,8 @@ Player internals, timing model, and the TTS audio path: see `references/player-a
 Run only when the user wants a standalone video file (e.g. "export to MP4", "把 html 影片轉成 mp4", "匯出 mp4") rather than the browser player. **Requires Phase 4 to have completed** — it reads the built `video/index.html` (and `video/narration.wav` if the voiced path produced one).
 
 1. Verify `<output_dir>/<slug>/video/index.html` exists. If not, run Phase 4 (`build_video.py`) first.
-2. Run `node scripts/export_mp4.mjs <output_dir>/<slug>`. It steps the player frame-by-frame in headless Chrome (driving Chrome over the DevTools Protocol via Node's built-in `WebSocket` — **no npm install**) and pipes screenshots into `ffmpeg`, producing `<output_dir>/<slug>/video/lecture.mp4` (H.264 + AAC; video-only when there is no narration track). Because the player renders every frame as a pure function of time, the export is deterministic — exact overlay/caption/mathwrite states, no real-time playback.
-3. Defaults: 60 fps, size auto-derived from the slide aspect ratio (height capped at 1080), CRF 18. Tune with `--fps`/`--width`/`--height`/`--crf`/`--preset`; override binaries with `--chrome`/`--ffmpeg`; `--out` to change the path. Export is compute-heavy (minutes for a multi-minute lecture).
+2. Run `node scripts/export_mp4.mjs <output_dir>/<slug>`. It steps the player frame-by-frame in headless Chrome (driving Chrome over the DevTools Protocol via Node's built-in `WebSocket` — **no npm install**) and pipes screenshots into `ffmpeg`, producing `<output_dir>/<slug>/video/lecture.mp4` (H.264 + AAC; video-only when there is no narration track). Because the player renders every frame as a pure function of time, the export is deterministic — exact overlay/caption/mathwrite states, no real-time playback. To stay fast it reads `timeline.json` and only screenshots frames that actually change: hand-written math (mathwrite) is the sole true `f(t)` animation and is captured per-frame, while static stretches (slide/overlay/caption changes are discrete under frame-stepped seek) reuse one cached screenshot — typically ~6× fewer screenshots than naive per-frame capture (it prints `screenshots N / M frames`). If `timeline.json` is missing it falls back to capturing every frame.
+3. Defaults: 30 fps, size auto-derived from the slide aspect ratio (height capped at 1080), CRF 18. Tune with `--fps`/`--width`/`--height`/`--crf`/`--preset`; override binaries with `--chrome`/`--ffmpeg`; `--out` to change the path. Pass `--fps 60` for smoother handwriting at roughly double the time. Export is compute-heavy (minutes for a multi-minute lecture).
 4. Tell the user the resulting `video/lecture.mp4` path.
 
 This phase needs **Node ≥ 22**, a local **Chrome/Chromium** (auto-detected; `--chrome` or `$CHROME_PATH` to override), and **ffmpeg** on PATH. It is purely additive — it never modifies the player or timeline, so it can be run any time after Phase 4 and re-run with different options.
@@ -132,9 +133,9 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 
 ### Scripts (run via Bash)
 
-- `scripts/compile_marp.sh` — invokes `npx @marp-team/marp-cli` to emit HTML, PDF, and per-page PNG.
+- `scripts/compile_marp.sh` — invokes `npx @marp-team/marp-cli` to emit HTML, PDF, the base player PNGs (mathwrite + overlay regions blanked), and — for decks with overlays — the `NN.reveal.png` crop sources plus a `.render.html` probe for bbox measurement.
 - `scripts/split_slides.py` — parses `slides.md` into a structured JSON of pages, overlays, and mathwrites.
-- `scripts/render_mathwrite.py` — renders mathwrite segment TeX to SVG (MathJax) and measures each formula's on-slide bbox via headless Chrome; writes `.mathwrite.json`. Only needed when the deck declares mathwrite blocks.
+- `scripts/render_mathwrite.py` — renders mathwrite segment TeX to SVG (MathJax) and measures every mathwrite block's and overlay's on-slide bbox via headless Chrome; writes `.mathwrite.json`. Run whenever the deck declares mathwrite blocks or overlays (MathJax/network only needed for mathwrite).
 - `scripts/plan_subagent_batches.py` — splits page list into batches sized by `pages_per_subagent`.
 - `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times (silent path).
 - `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.wav`, and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
@@ -144,9 +145,10 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 ### Assets (copied into output)
 
 - `assets/marp/theme.css` — bundled default marp theme (theme name `input`, 4:3 1024×768pt, CJK-friendly font stack). Used when `marp_template_path` is not specified.
-- `assets/player/index.html` — reveal.js-style auto-play HTML (slides as `<img>`, with `<audio>` slot, overlay `<div>`s).
-- `assets/player/player.css` — layout and overlay fade animation.
-- `assets/player/player.js` — timeline driver: advances slides, shows/hides overlays, syncs to audio when present.
+- `assets/player/index.html` — reveal.js-style auto-play HTML (slides as `<img>`, with `<audio>` slot, overlay/reveal/mathwrite layers).
+- `assets/player/player.css` — layout, overlay-reveal + badge fade animation, mathwrite layer.
+- `assets/player/player.js` — timeline driver: advances slides, hand-writes mathwrite formulas (each glyph replaced by its Hershey single-stroke centerline and drawn along a real pen trajectory; data in `assets/player/hershey-font.js`), reveals overlay content in place, syncs to audio when present.
+- `assets/player/hershey-font.js` — generated single-stroke (Hershey) glyph centerlines used by the mathwrite hand-writing (built by `scripts/gen_hershey_font.py` from `assets/hershey/*.jhf`).
 
 ## Required Tooling
 

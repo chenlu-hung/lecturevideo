@@ -139,6 +139,26 @@ def load_mathwrite_meta(topic_dir: Path, pages: list[dict]) -> dict | None:
     return {(m["page"], m["id"]): m for m in data.get("mathwrites", [])}
 
 
+def load_overlay_meta(topic_dir: Path, pages: list[dict]) -> dict:
+    """Return {(page_index, id): bbox|None} from .mathwrite.json's "overlays", so each
+    timeline overlay can carry the on-slide region the player reveals in place.
+
+    Raises SystemExit if the deck declares overlays but the rendered metadata is
+    missing — compile_marp.sh blanks overlay regions in the PNG, so without bboxes
+    the player would have nothing to reveal and the content would be lost.
+    """
+    if not any(page.get("overlays") for page in pages):
+        return {}
+    meta_path = topic_dir / ".mathwrite.json"
+    if not meta_path.is_file():
+        raise SystemExit(
+            f"ERROR: deck declares overlays but {meta_path} is missing — "
+            "run scripts/render_mathwrite.py first (overlays now need bbox measurement)"
+        )
+    data = json.loads(meta_path.read_text(encoding="utf-8"))
+    return {(o["page"], o["id"]): o.get("bbox") for o in data.get("overlays", [])}
+
+
 FALLBACK_BBOX = {"x": 0.1, "y": 0.35, "w": 0.8, "h": 0.3}
 
 
@@ -211,6 +231,7 @@ def main(argv: list[str]) -> int:
 
     try:
         mw_meta = load_mathwrite_meta(slides_json.parent, pages)
+        ov_meta = load_overlay_meta(slides_json.parent, pages)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -269,15 +290,17 @@ def main(argv: list[str]) -> int:
                 )
                 continue
             local_start, local_end = times
-            timeline_overlays.append(
-                {
-                    "slide": idx,
-                    "id": oid,
-                    "label": label,
-                    "start": round(global_start + local_start, 3),
-                    "end": round(global_start + local_end, 3),
-                }
-            )
+            entry = {
+                "slide": idx,
+                "id": oid,
+                "label": label,
+                "start": round(global_start + local_start, 3),
+                "end": round(global_start + local_end, 3),
+            }
+            bbox = ov_meta.get((idx, oid))
+            if bbox:
+                entry["bbox"] = bbox
+            timeline_overlays.append(entry)
 
         if mw_meta is not None:
             def resolve(marker: str, _cues=cues, _gs=global_start):

@@ -48,6 +48,7 @@ from derive_timeline import (  # noqa: E402  (local sibling module)
     OVERLAY_OPEN_RE,
     build_page_mathwrites,
     load_mathwrite_meta,
+    load_overlay_meta,
     parse_srt,
 )
 
@@ -175,6 +176,7 @@ def main(argv: list[str]) -> int:
     pages = json.loads(slides_json.read_text(encoding="utf-8"))["pages"]
     try:
         mw_meta = load_mathwrite_meta(topic_dir, pages)
+        ov_meta = load_overlay_meta(topic_dir, pages)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -347,13 +349,17 @@ def main(argv: list[str]) -> int:
                 continue
             start_frame = real.get(open_g, (page_start[pi], page_start[pi]))[0]
             end_frame = real.get(close_g, (start_frame, start_frame))[1]
-            timeline_overlays.append({
+            ov_entry = {
                 "slide": idx,
                 "id": oid,
                 "label": overlay.get("label", oid),
                 "start": t(start_frame),
                 "end": t(end_frame),
-            })
+            }
+            bbox = ov_meta.get((idx, oid))
+            if bbox:
+                ov_entry["bbox"] = bbox
+            timeline_overlays.append(ov_entry)
 
         if mw_meta is not None:
             def resolve(marker: str, _cues=cues, _pstart=page_start[pi]):

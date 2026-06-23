@@ -19,7 +19,7 @@
 // using Node's built-in WebSocket (no npm dependency); needs only Chrome + ffmpeg.
 //
 // Options:
-//   --fps <n>        frames per second (default 60)
+//   --fps <n>        frames per second (default 30)
 //   --width <px>     capture width  (default: auto from the slide aspect ratio)
 //   --height <px>    capture height (default: auto, slide height capped at 1080)
 //   --crf <n>        libx264 quality, lower = better (default 18)
@@ -30,7 +30,7 @@
 //   --keep-frames    also write PNG frames to <topic_dir>/video/.frames/
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
+import { existsSync, readdirSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -41,7 +41,7 @@ import { pathToFileURL } from "node:url";
 // ---------- arg parsing ----------
 function parseArgs(argv) {
   const opts = {
-    fps: 60, width: null, height: null, crf: 18, preset: "medium",
+    fps: 30, width: null, height: null, crf: 18, preset: "medium",
     out: null, chrome: null, ffmpeg: "ffmpeg", keepFrames: false, topic: null,
   };
   const rest = [];
@@ -70,7 +70,7 @@ function parseArgs(argv) {
 
 const USAGE =
   "Usage: node scripts/export_mp4.mjs <topic_dir> " +
-  "[--fps 60] [--width PX] [--height PX] [--crf 18] [--preset medium] " +
+  "[--fps 30] [--width PX] [--height PX] [--crf 18] [--preset medium] " +
   "[--out FILE] [--chrome PATH] [--ffmpeg PATH] [--keep-frames]\n" +
   "  default size: auto from slide aspect ratio (height capped at 1080)";
 
@@ -255,6 +255,79 @@ async function main() {
     const nFrames = Math.max(1, Math.round(total * opts.fps));
     console.log(`[export_mp4] total ${total.toFixed(2)}s → ${nFrames} frames`);
 
+    // ---- prepare timeline for static caching ----
+    let timeline = null;
+    try {
+      const tlPath = path.join(topicDir, "timeline.json");
+      if (existsSync(tlPath)) {
+        timeline = JSON.parse(readFileSync(tlPath, "utf-8"));
+      }
+    } catch (e) {
+      console.warn(`[export_mp4] WARN: could not read timeline.json, falling back to full render: ${e.message}`);
+    }
+
+    const animatedWindows = [];
+    const staticSegments = []; // { a, b, tShot, cachedBuf }
+
+    if (timeline) {
+      const eps = 1 / opts.fps;
+      // 1. Build animated windows
+      const rawWindows = [];
+      for (const mw of timeline.mathwrites || []) {
+        for (const seg of mw.segs || []) {
+          if (typeof seg.start === "number" && typeof seg.end === "number") {
+            rawWindows.push([seg.start - eps, seg.end + eps]);
+          }
+        }
+      }
+      rawWindows.sort((a, b) => a[0] - b[0]);
+      for (const w of rawWindows) {
+        if (!animatedWindows.length) {
+          animatedWindows.push([...w]);
+        } else {
+          const last = animatedWindows[animatedWindows.length - 1];
+          if (w[0] <= last[1]) {
+            last[1] = Math.max(last[1], w[1]);
+          } else {
+            animatedWindows.push([...w]);
+          }
+        }
+      }
+
+      const isAnimated = (t) => {
+        for (const w of animatedWindows) {
+          if (t >= w[0] && t <= w[1]) return true;
+        }
+        return false;
+      };
+
+      // 2. Build static change-point boundaries
+      const bounds = new Set([0, total]);
+      for (const s of timeline.slides || []) { if (typeof s.start === "number") bounds.add(s.start); if (typeof s.end === "number") bounds.add(s.end); }
+      for (const o of timeline.overlays || []) { if (typeof o.start === "number") bounds.add(o.start); if (typeof o.end === "number") bounds.add(o.end); }
+      for (const c of timeline.captions || []) { if (typeof c.start === "number") bounds.add(c.start); if (typeof c.end === "number") bounds.add(c.end); }
+      for (const mw of timeline.mathwrites || []) {
+        for (const seg of mw.segs || []) {
+          if (typeof seg.start === "number") bounds.add(seg.start);
+          if (typeof seg.end === "number") bounds.add(seg.end);
+        }
+      }
+      const sortedBounds = Array.from(bounds).sort((a, b) => a - b);
+
+      for (let i = 0; i < sortedBounds.length - 1; i++) {
+        const a = sortedBounds[i];
+        const b = sortedBounds[i + 1];
+        if (a === b) continue;
+        const mid = (a + b) / 2;
+        if (!isAnimated(mid)) {
+          let tShot;
+          if (b - a < 0.05) tShot = Math.max(a, b - 1e-3);
+          else tShot = Math.min(a + 0.32, (a + b) / 2);
+          staticSegments.push({ a, b, tShot, cachedBuf: null });
+        }
+      }
+    }
+
     // ---- ffmpeg: read PNG frames from stdin, mux audio, encode H.264 ----
     const ff = [
       "-y", "-loglevel", "error", "-nostats",
@@ -281,14 +354,53 @@ async function main() {
 
     // ---- step + screenshot every frame ----
     const t0 = Date.now();
+    let screenshotsTaken = 0;
+    let currentSegmentIdx = 0;
+
     for (let i = 0; i < nFrames; i++) {
       const t = i / opts.fps;
-      await sess("Runtime.evaluate", {
-        expression: `window.__lectureExport.renderAt(${t})`,
-        awaitPromise: true,
-      });
-      const { data } = await sess("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-      const buf = Buffer.from(data, "base64");
+      let isAnim = true;
+      let seg = null;
+
+      if (timeline) {
+        isAnim = false;
+        for (const w of animatedWindows) {
+          if (t >= w[0] && t <= w[1]) { isAnim = true; break; }
+        }
+        if (!isAnim) {
+          while (currentSegmentIdx < staticSegments.length && staticSegments[currentSegmentIdx].b <= t) {
+            currentSegmentIdx++;
+          }
+          if (currentSegmentIdx < staticSegments.length && staticSegments[currentSegmentIdx].a <= t) {
+            seg = staticSegments[currentSegmentIdx];
+          } else {
+            isAnim = true; // fallback if boundary precision misses
+          }
+        }
+      }
+
+      let buf;
+      if (isAnim) {
+        await sess("Runtime.evaluate", {
+          expression: `window.__lectureExport.renderAt(${t})`,
+          awaitPromise: true,
+        });
+        const { data } = await sess("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        buf = Buffer.from(data, "base64");
+        screenshotsTaken++;
+      } else {
+        if (!seg.cachedBuf) {
+          await sess("Runtime.evaluate", {
+            expression: `window.__lectureExport.renderAt(${seg.tShot})`,
+            awaitPromise: true,
+          });
+          const { data } = await sess("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+          seg.cachedBuf = Buffer.from(data, "base64");
+          screenshotsTaken++;
+        }
+        buf = seg.cachedBuf;
+      }
+
       await writeFrame(buf);
       if (opts.keepFrames) await writeFile(path.join(framesDir, `${String(i).padStart(6, "0")}.png`), buf);
       if (i % opts.fps === 0 || i === nFrames - 1) {
@@ -301,7 +413,7 @@ async function main() {
     ffmpeg.stdin.end();
     await ffmpegDone;
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log(`[export_mp4] wrote ${outPath} (${nFrames} frames in ${secs}s)`);
+    console.log(`[export_mp4] wrote ${outPath} (screenshots ${screenshotsTaken} / ${nFrames} frames in ${secs}s)`);
   } finally {
     await cleanup();
   }

@@ -14,7 +14,7 @@ How the bundled `assets/player/` works and how `build_video.py` wires it up. Rea
 <div id="stage">
   <img id="slide" src="slides/01.png">      <!-- current slide image -->
   <div id="mathwrites"></div>                <!-- hand-written math layer -->
-  <div id="overlays"></div>                  <!-- overlay <div>s rendered here -->
+  <div id="overlays"></div>                  <!-- overlay badges + in-place reveal crops -->
   <div id="captions"><span id="caption-text"></span></div>  <!-- subtitle bar -->
 </div>
 <audio id="narration" preload="metadata">    <!-- narration.wav present iff the TTS phase ran -->
@@ -44,7 +44,8 @@ the real synthesized audio) shape:
     {"index": 2, "start": 32.5, "end": 71.2, "image": "slides.images/02.png"}
   ],
   "overlays": [
-    {"slide": 2, "id": "key-insight", "start": 45.1, "end": 60.7, "label": "關鍵推論"}
+    {"slide": 2, "id": "key-insight", "start": 45.1, "end": 60.7, "label": "關鍵推論",
+     "bbox": {"x": 0.06, "y": 0.62, "w": 0.88, "h": 0.08}}
   ],
   "captions": [
     {"start": 32.5, "end": 38.9, "text": "我們先寫下要求的東西…"}
@@ -66,12 +67,11 @@ timeline (SRT-estimated in the silent path, real audio in the voiced path).
 formula's position as fractions of the slide; each seg carries a standalone MathJax
 SVG (from `.mathwrite.json`) plus its narration-derived time window.
 
-`build_video.py` reads this and injects:
-
-1. `<script>const TIMELINE = {...};</script>` block in `index.html`.
-2. One `<div class="overlay" data-id=... data-start=... data-end=...>` per overlay, initially `opacity: 0`.
-
-The injected overlay `<div>`s are blank — the player draws a label badge and a soft highlight border. If a richer overlay (custom HTML) is desired in future, extend `build_video.py` to read overlay content from the slide's markdown body inside the overlay markers and inject it as inner HTML.
+`build_video.py` injects the `<script>const TIMELINE = {...};</script>` block into
+`index.html` and copies `slides.images/` (including the `NN.reveal.png` crop sources) into
+`video/slides/`. It does **not** emit overlay/mathwrite DOM — `player.js` builds those at
+runtime from `TIMELINE`. Each overlay entry carries `{slide, id, label, start, end}` plus,
+when measured, a `bbox` (fractions of the slide) used for the in-place reveal.
 
 ## Time source
 
@@ -100,27 +100,24 @@ Binary search (or simple linear scan, since N is small) finds the current slide 
 
 ## Overlay rendering
 
-CSS handles the fade:
+Each overlay produces up to two elements, both built by `player.js` from `TIMELINE.overlays`:
 
-```css
-.overlay {
-  position: absolute;
-  inset: 4% 4% auto auto;
-  padding: 8px 14px;
-  background: rgba(255, 220, 0, 0.95);
-  border-radius: 6px;
-  font-weight: 600;
-  opacity: 0;
-  transform: translateY(-6px);
-  transition: opacity 240ms ease, transform 240ms ease;
-}
-.overlay.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-```
+1. **Badge** (`.overlay`) — a small top-right card showing the overlay's `label`, faded in
+   only during `[start, end)` as a "look here" highlight. Stacks vertically when several
+   overlays are active (`data-stack`).
+2. **In-place reveal** (`.overlay-reveal`, only when the overlay has a `bbox`) — a box
+   positioned over the slide region the base PNG left blank, with the matching crop of
+   `NN.reveal.png` as a shifted background (`background-size` = displayed slide size,
+   `background-position` = `-(bbox.x·W), -(bbox.y·H)`). It fades in at `start` and — unlike
+   the badge — **stays visible until the slide changes**, because revealed content was merely
+   delayed, not transient. `layoutOverlayReveals()` recomputes geometry on slide change /
+   resize / export; reveal crops are preloaded so the frame export never captures a half-
+   loaded image.
 
-The overlay text shown is the `label` from `.slides.json`. The position (top-right by default) can be customised by adding a `position: <region>` field to the overlay annotation in slides.md and propagating it through `split_slides.py` and `build_video.py`.
+The base PNG has the overlay region blanked (`compile_marp.sh`), so before `start` the area
+is empty and the reveal makes the content appear exactly where it lives. An overlay whose
+`bbox` could not be measured gets only the badge (its content stays blanked — a warning is
+emitted by `render_mathwrite.py`).
 
 ## Captions (subtitle bar)
 
@@ -146,11 +143,31 @@ blank (`compile_marp.sh` hides `.mathwrite` divs for the PNG pass only). Key poi
   sit on one text baseline (MathJax's `vertical-align`), and the row is scaled to fit
   the box.
 - Drawing is a **pure function of time** `t`: a segment's progress is
-  `(t − start) / (end − start)`, clamped. Glyph paths (`path[data-c]` / `use[data-c]`)
-  are revealed sequentially by path length — partial glyphs render as a `currentColor`
-  stroke via `stroke-dasharray`, completed glyphs revert to normal fill; `<rect>` rules
-  (fraction bars) grow by width. Because nothing is a one-shot CSS animation, seeking
-  to any `t` lands on the exact partially-written state.
+  `(t − start) / (end − start)`, clamped, mapped to a length along the segment's
+  pieces (collected in reading order). Each glyph is **truly single-stroke
+  hand-written**: `mwCollectNodes` replaces the MathJax glyph outline with its
+  **Hershey single-stroke centerline** (`window.HERSHEY_FONT` from
+  `hershey-font.js`; `mwCodeToKey` maps the glyph's codepoint — math-alphanumeric
+  letters/digits fold to ASCII, Greek to `g:<slot>`, a few hand-authored math
+  symbols to `s:<name>`), fit into the glyph's own `getBBox` and **y-flipped**
+  (Hershey is y-down, MathJax glyph-local is y-up). That centerline path is
+  `fill:none`, stroked at the constant `MW_PEN_EM` (font units → one uniform
+  chalk/marker pen), and revealed by sweeping `stroke-dashoffset` from `len`→`0`
+  along the real pen trajectory — **not** an outline trace and **not** a fade. A
+  glyph with no Hershey mapping degrades to a `fade` node (clean opacity ramp,
+  never an outline trace); invisible operators (U+2061…) are skipped; fraction-bar
+  `<rect>`s grow by width. A single **pen-nib element** (`.mw-pen`) rides the
+  **true stroke frontier** — `getPointAtLength` at the nib's distance along the
+  centerline, mapped from the path's local space through `svgCTM⁻¹·elCTM` into
+  viewBox space and then into the SVG's on-screen box (so the row's CSS
+  translate/scale is honoured) — and rests at the end of the last glyph between
+  glyphs, releasing when the segment is fully written. `mwCollectNodes` **defers**
+  (leaves `seg.nodes` null to retry next frame / on slide-image load) while the box
+  is still collapsed, so it never caches a degraded all-fallback state. Because
+  every value is a function of `t` (no one-shot CSS animation), seeking lands on the
+  exact partially-written state; the frame export refreshes the nib after layout
+  settles. The single-stroke font data is generated offline by
+  `scripts/gen_hershey_font.py` from the bundled public-domain `assets/hershey/*.jhf`.
 - A segment with a zero-length window (missing SRT markers — the timeline producers
   warn) appears fully drawn from slide start, so the formula never silently vanishes.
 - Ink colour comes from `--mw-ink` on `#mathwrites` (default near-black).

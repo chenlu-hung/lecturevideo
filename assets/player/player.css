@@ -51,8 +51,9 @@ html, body {
   pointer-events: none;
 }
 
-/* Hand-written math layer: segment SVGs are stroke-drawn then filled by
-   player.js inside the bbox that the PNG render left blank. */
+/* Hand-written math layer: player.js replaces each MathJax glyph with its Hershey
+   single-stroke centerline and sweeps the pen along it, inside the bbox that the
+   PNG render left blank. */
 #mathwrites {
   position: absolute;
   inset: 0;
@@ -76,6 +77,19 @@ html, body {
 }
 
 .mw-seg svg { overflow: visible; }
+
+/* The pen nib that rides the writing frontier while a mathwrite segment is being
+   hand-written. player.js sets its size/position each frame; hidden when nothing
+   is currently being drawn. */
+.mw-pen {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 5;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.28));
+  will-change: left, top;
+}
 
 /* Subtitle bar: the narration SRT text, shown in sync at the bottom of the
    stage. Pure overlay (pointer-events none) so it never blocks the slide. */
@@ -135,6 +149,20 @@ html, body {
 .overlay[data-stack="1"] { top: calc(5% + 64px); }
 .overlay[data-stack="2"] { top: calc(5% + 128px); }
 .overlay[data-stack="3"] { top: calc(5% + 192px); }
+
+/* In-place overlay content reveal: a crop of NN.reveal.png, positioned over the
+   region the base slide PNG left blank, faded in at the overlay's window so the
+   content appears where it lives (e.g. a remark under a formula, after it is
+   hand-written) rather than from slide-load. player.js sets position + background. */
+.overlay-reveal {
+  position: absolute;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: opacity 280ms ease;
+  pointer-events: none;
+}
+
+.overlay-reveal.visible { opacity: 1; }
 
 #controls {
   display: flex;
