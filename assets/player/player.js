@@ -723,6 +723,18 @@
     if (controls) controls.style.display = "none";
     document.documentElement.style.background = "#000";
     document.body.style.background = "#000";
+    // Kill CSS transitions/animations for the frame-stepped capture. Each
+    // renderAt() inherits the previous frame's DOM state, so an overlay/reveal
+    // toggling at a segment boundary would *start* its 280ms opacity fade right
+    // as we screenshot — and export_mp4.mjs caches one screenshot per static
+    // segment, freezing that half-faded state for the whole (multi-second)
+    // segment. With transitions off, every captured frame is the fully-settled
+    // discrete state, matching what the live player shows seconds into the same
+    // window. (The handwriting strokes are JS-driven, not CSS, so unaffected.)
+    const st = document.createElement("style");
+    st.id = "__export-no-transition";
+    st.textContent = "*,*::before,*::after{transition:none !important;animation:none !important;}";
+    document.head.appendChild(st);
     return TOTAL;
   }
 
