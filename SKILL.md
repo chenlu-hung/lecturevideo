@@ -1,7 +1,7 @@
 ---
 name: lecture-video-generator
 description: This skill should be used when the user asks to "generate a lecture video", "make a teaching video on X", "produce slides + narration video", "create lecture from topic", "auto-generate teaching slides", "auto-generate marp slides with narration", "make a voiced/narrated lecture video", "把主題做成教學影片", "生成教學影片", "從主題自動生成投影片與講稿", "做一個關於 X 的上課影片", "幫我做投影片+講稿", "把 X 變成上課影片", "自動生成 marp 投影片", "帶旁白腳本的投影片", "要有旁白/配音的教學影片", "有聲教學影片", "數學式手寫動畫", "板書動畫", "像老師寫黑板一樣寫公式", "handwritten math animation", "export the lecture video to MP4", "把教學影片轉成 mp4", "把 html 影片轉成 mp4", "把投影片影片轉成 mp4", "匯出 mp4", "輸出成 mp4 檔", "convert the lecture/HTML video to mp4", "render the lecture as an mp4 file", or provides a topic and wants an end-to-end pipeline that produces marp slides (HTML+PDF), per-page SRT narration via parallel sub-agents, and a reveal.js-style auto-play HTML video with overlay timing — optionally with real spoken narration synthesized by a local IndexTTS-2 (TTS) voice, and optionally exported to a standalone MP4 file.
-version: 0.4.0
+version: 0.5.0
 ---
 
 # Lecture Video Generator
@@ -71,10 +71,11 @@ Detailed step-by-step procedure, decision tree, and re-do mechanics: see `refere
 ### Phase 2 — Slides
 
 1. Read `outline.md`. Resolve `marp_template_path` (default = bundled `assets/marp/theme.css`). Halt if the file does not exist.
-2. Generate `slides.md` using marp syntax following `references/marp-and-overlays.md`. The marp frontmatter, slide separator rules, and overlay annotation grammar are defined there — do not reinvent them.
+2. Generate `slides.md` using marp syntax following `references/marp-and-overlays.md`. The marp frontmatter, slide separator rules, overlay annotation grammar, **and the layout/density budget (§"Layout & density": ≤5 bullets or ~10 lines per page, display math at the top level only, no per-page font hacks)** are defined there — do not reinvent them.
 3. Run `bash scripts/compile_marp.sh <output_dir>/<slug>/slides.md <marp_template_path> <output_dir>/<slug>` to produce `slides.html`, `slides.pdf`, and the player PNGs. The base `slides.images/NN.png` has mathwrite formulas **and** overlay content blanked (so the player animates them in at narration time, not from slide-load); when the deck has overlays it also emits `slides.images/NN.reveal.png` (overlays visible) that the player crops the revealed content from. The HTML/PDF handout keeps everything visible.
-4. Run `python3 scripts/split_slides.py <output_dir>/<slug>/slides.md <output_dir>/<slug>/.slides.json` to extract per-page text, overlay, and mathwrite metadata.
-5. **If the deck declares mathwrite blocks or overlays**: run `python3 scripts/render_mathwrite.py <output_dir>/<slug>` to render each mathwrite segment to SVG and measure the on-slide bbox of every mathwrite block **and** every overlay region; writes `.mathwrite.json`. Needs the same headless Chrome marp uses; the MathJax CDN is only required when there are mathwrite blocks (overlay-only decks skip it). These bboxes let the player hand-write formulas and **reveal overlay content in place** at narration time — so skipping this step on a deck with overlays would leave their content blanked and unrevealed. Use mathwrite for any display formula the narration walks through term by term — the player hand-writes it like a teacher at a whiteboard, synced to the narration (grammar in `references/marp-and-overlays.md` §"Mathwrite").
+4. Run `python3 scripts/check_fit.py <output_dir>/<slug>` to catch any page whose content overflows the slide box (exit `3` + one `page NN OVERFLOW by …px` line per offender; exit `0` when clean). For each offender, **thin the page** (split it, cut words, or move a display formula to its own page — never shrink the font) and re-run `compile_marp.sh` + `check_fit.py` until it exits `0`.
+5. Run `python3 scripts/split_slides.py <output_dir>/<slug>/slides.md <output_dir>/<slug>/.slides.json` to extract per-page text, overlay, and mathwrite metadata.
+6. **If the deck declares mathwrite blocks or overlays**: run `python3 scripts/render_mathwrite.py <output_dir>/<slug>` to render each mathwrite segment to SVG and measure the on-slide bbox of every mathwrite block **and** every overlay region; writes `.mathwrite.json`. Needs the same headless Chrome marp uses; the MathJax CDN is only required when there are mathwrite blocks (overlay-only decks skip it). These bboxes let the player hand-write formulas and **reveal overlay content in place** at narration time — so skipping this step on a deck with overlays would leave their content blanked and unrevealed. Use mathwrite for any display formula the narration walks through term by term — the player hand-writes it like a teacher at a whiteboard, synced to the narration (grammar in `references/marp-and-overlays.md` §"Mathwrite").
 
 ### Phase 3 — SRT scripts via parallel sub-agents
 
@@ -134,6 +135,7 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 ### Scripts (run via Bash)
 
 - `scripts/compile_marp.sh` — invokes `npx @marp-team/marp-cli` to emit HTML, PDF, the base player PNGs (mathwrite + overlay regions blanked), and — for decks with overlays — the `NN.reveal.png` crop sources plus a `.render.html` probe for bbox measurement.
+- `scripts/check_fit.py` — loads `slides.html` in headless Chrome and reports any page whose content overflows the slide box (exit `3` on overflow). Run after `compile_marp.sh`; no network needed.
 - `scripts/split_slides.py` — parses `slides.md` into a structured JSON of pages, overlays, and mathwrites.
 - `scripts/render_mathwrite.py` — renders mathwrite segment TeX to SVG (MathJax) and measures every mathwrite block's and overlay's on-slide bbox via headless Chrome; writes `.mathwrite.json`. Run whenever the deck declares mathwrite blocks or overlays (MathJax/network only needed for mathwrite).
 - `scripts/plan_subagent_batches.py` — splits page list into batches sized by `pages_per_subagent`.
@@ -158,6 +160,6 @@ Verify availability before starting; halt with a clear instruction to install if
 - `python3` (for the bundled scripts; standard library only — no `pip install` required).
 - A modern browser to view the player. PDF export uses marp-cli's built-in chromium download.
 - **Only for Phase 5 (MP4 export):** Node ≥ 22, a local Chrome/Chromium (auto-detected; `--chrome` or `$CHROME_PATH` to override), and `ffmpeg` on PATH. `export_mp4.mjs` has no npm dependencies. The rest of the pipeline works without these — only MP4 export needs them.
-- **Only when the deck uses mathwrite blocks:** a local Chrome/Chromium/Edge (auto-detected; override with `CHROME_PATH` or `--chrome`) and network access to the MathJax CDN at build time (`--mathjax-url` can point at a local copy).
+- **Phase 2 fit check (`check_fit.py`) and mathwrite rendering (`render_mathwrite.py`):** a local Chrome/Chromium/Edge (auto-detected; override with `CHROME_PATH` or `--chrome`). `check_fit.py` needs no network; `render_mathwrite.py` additionally needs the MathJax CDN at build time when the deck has mathwrite blocks (`--mathjax-url` can point at a local copy).
 - **Only when `tts` is enabled:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`, plus a `voice_ref` `.wav`. If the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Debug` in that checkout). The skill works fully without this — only the voiced path needs it.
 - **For Traditional Chinese narration with TTS:** `opencc` on PATH (`brew install opencc`) so the spoken text can be converted to Simplified (IndexTTS-2 is Simplified-only). Without it, `synthesize_tts.py` warns and proceeds, but Traditional characters will be mispronounced.

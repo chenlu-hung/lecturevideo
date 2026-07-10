@@ -31,6 +31,51 @@ These apply only to the slide that immediately follows. Without the leading unde
 
 Slide separator: a line containing only `---` (no leading/trailing whitespace).
 
+## Layout & density
+
+The bundled theme is **16:9 and top-anchored** (content starts at the top of the slide and
+grows downward; short pages leave whitespace at the *bottom*, which looks fine). A page that
+holds more than the box can fit is **clipped at the bottom** — the single most common way a
+generated deck "looks broken". Author to a budget instead of packing pages:
+
+- **Per-page budget:** a title **plus ≤ 5 bullets**, or **≤ ~10 lines** of body text total.
+  A display formula (`$$…$$` or a `mathwrite` block) counts as **~2.5 lines**. A slide with
+  two display formulas and a sentence of setup is already near full.
+- **Prefer two airy slides over one crammed slide.** Splitting a topic across pages costs
+  nothing (the narration and timeline follow the page count automatically) and reads far
+  better than shrinking everything to squeeze it in.
+- **Titles are `#` (or `##`) — one per slide.** Both render as a left-aligned title; keep the
+  title to one line.
+
+### Display math goes at the top level — never inside a bullet
+
+Put every display formula on **its own line at the top level**:
+
+```markdown
+下面這個積分：
+
+$$\int x \cos x \, dx = ?$$
+```
+
+Do **not** put display-sized math inside a list item — neither `$$…$$` nor an inline
+`$\displaystyle …$` inside a `-`/`1.` bullet. The list marker (the bullet dot) then floats
+next to a giant formula, which is exactly the "math in a weird place" artefact. Inline
+`$…$` math *within a sentence* (e.g. "取 $u = x$") is fine and encouraged.
+
+### Do not hand-tune per-page font size
+
+The theme's sizes are calibrated for readable teaching slides — do **not** add
+`<style scoped> section { font-size: … }` to individual pages to make content fit. If a page
+is too full, **thin it or split it** (above). The one sanctioned exception is a deliberately
+dense multi-line derivation kept on one slide — see §"Dense / single-page derivations".
+
+### Verify the fit
+
+After `compile_marp.sh`, run `python3 scripts/check_fit.py <topic_dir>`. It renders the deck
+in headless Chrome and reports any page whose content overflows the slide box (exit code `3`,
+one `page NN OVERFLOW by …px` line per offender). Fix each offender (split / cut / move a
+formula to its own page) and re-compile until it exits `0`.
+
 ## Overlay annotations
 
 Overlays mark content that appears with a delay during playback, synced to narration. `compile_marp.sh` **blanks each overlay's region in the slide PNG** and also renders an overlay-visible `NN.reveal.png`; `render_mathwrite.py` measures each overlay's bbox. The player then fades the cropped content **in place** at the overlay's narration window (plus a small top-right badge showing the `label`). So overlay content is hidden until its narration reaches it and then stays put until the slide changes — it is not baked onto the slide from the start. The slide still compiles normally; marp does not interpret the annotation comments.
@@ -143,18 +188,19 @@ segment SVGs and measure the blanked region (see SKILL.md Phase 2).
 
 ## Dense / single-page derivations
 
-When a whole multi-line derivation must stay on one slide (e.g. the user asks to keep one
-formula's derivation together), do **not** reflexively shrink the font to a tiny size —
-the usual culprit for overflow is the theme's default block spacing, not the glyph size.
-The bundled theme sets `p`/`li` margins of `42pt`; six stacked display formulas at that
-spacing run off the bottom long before the font is the problem. Prefer a scoped style that
-**kills the spacing first, then sizes the font to fill the box**:
+This is the **one** sanctioned use of a per-page `<style scoped>` override (see §"Layout &
+density" — otherwise, do not hand-tune font size). When a whole multi-line derivation must
+stay on one slide (e.g. the user asks to keep one formula's derivation together), do **not**
+reflexively shrink the font to a tiny size — the usual culprit for overflow is block spacing,
+not glyph size. Six stacked display formulas at normal paragraph spacing run off the bottom
+long before the font is the problem. Prefer a scoped style that **kills the spacing first,
+then sizes the font to fill the box**:
 
 ```markdown
 <style scoped>
-section { font-size: 26pt; padding: 26pt 50pt; }
-h2 { font-size: 34pt; margin: 0 0 8pt 0; }
-p  { font-size: 26pt; margin: 4pt 0; }
+section { padding: 24pt 50pt; }
+h1 { font-size: 34pt; margin: 0 0 8pt 0; }
+p  { margin: 4pt 0; }
 div.mathwrite { margin: 0; }
 .katex-display { margin: 7pt 0 !important; }
 </style>
@@ -170,12 +216,14 @@ everything.
 
 ## Default theme reference
 
-The bundled default at `../marp_keynote_template/theme.css` (resolved from the user's working directory) defines:
+The bundled default at `assets/marp/theme.css` (theme name `input`) defines:
 
-- 1024pt × 768pt slide size (4:3).
-- 36pt body text, 80pt h1 (centered), 52pt h2.
+- 960pt × 540pt slide size (16:9); content anchored to the top of the slide.
+- 26pt body text; 40pt `h1` / 32pt `h2` per-page titles (left-aligned).
+- `<!-- _class: lead -->` slides are centered with an enlarged title (use it for the cover).
+- Display math (`.katex`) kept only slightly larger than body text so formulas never balloon.
 - Font stack favouring `PingFang TC` for CJK rendering.
-- Accent palette: `--kn-accent1: #0365C0`, `--kn-accent2: #00882B`, etc.
+- Accent palette: `--kn-accent1: #0365C0`, `--kn-accent2: #00882B`, etc.; `**bold**` renders in accent blue.
 
 When the user supplies a different template, do not rewrite the CSS — only adjust `theme:` in the frontmatter.
 
@@ -184,5 +232,7 @@ When the user supplies a different template, do not rewrite the CSS — only adj
 - **Forgetting `marp: true`** — the file will not be processed by marp-cli. Always include it.
 - **Using `===` or `***` as slide separators** — only `---` works.
 - **Overlay markers inside a list item** — keep them on their own lines, not on the same line as a bullet.
+- **Display math inside a bullet** — never put `$$…$$` or `$\displaystyle …$` in a `-`/`1.` list item; the bullet dot ends up floating beside a giant formula. Put display math at the top level (see §"Layout & density").
+- **Cramming a page** — if a page carries more than a title + ≤5 bullets (or ~10 lines, a display formula ≈ 2.5), split it; overflow is clipped at the bottom. Verify with `scripts/check_fit.py`.
 - **Image paths** — use paths relative to `slides.md`, not to the project root.
 - **Math** — marp supports `$inline$` and `$$display$$` math via KaTeX when the marp-cli is invoked with `--html`. The bundled `compile_marp.sh` already passes `--html`.

@@ -108,9 +108,10 @@ if [[ -n "$HIDE_BASE" ]]; then
   echo "[compile_marp] blanking mathwrite/overlay regions in the base PNG render"
 fi
 echo "[compile_marp] PNG  →  $OUT_DIR/slides.images/"
-# --image-scale 1.5: the default theme is 1024pt×768pt = 1365.33px wide; newer
-# Chrome rejects fractional device-metrics widths. ×1.5 lands on 2048×1536
-# (integers) and doubles as a quality bump for the player.
+# --image-scale 1.5: the default theme is 960pt×540pt = 1280×720px (16:9). ×1.5
+# lands on 1920×1080 (integers — newer Chrome rejects fractional device-metrics
+# widths) and doubles as a quality bump for the player. A custom theme sized in
+# pt must likewise resolve to whole pixels at ×1.5.
 "${MARP[@]}" "$BASE_SRC" \
   --theme-set "$THEME_CSS" --html --allow-local-files \
   --images png --image-scale 1.5 \

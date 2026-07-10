@@ -26,6 +26,11 @@ Paths below are relative to the repo root.
 # Phase 2 — render marp deck to HTML + PDF + per-page PNG (needs node/npx; auto-installs marp-cli)
 bash scripts/compile_marp.sh output/<slug>/slides.md assets/marp/theme.css output/<slug>
 
+# Phase 2 — flag any page whose content overflows the slide box (headless Chrome, no network).
+# Exit 3 + one "page NN OVERFLOW by …px" line per offender; 0 when clean. Run after compile;
+# on overflow, thin/split the page and re-compile until clean.
+python3 scripts/check_fit.py output/<slug>
+
 # Phase 2 — parse slides.md into pages + overlay/mathwrite metadata
 python3 scripts/split_slides.py output/<slug>/slides.md output/<slug>/.slides.json
 
@@ -159,9 +164,16 @@ a symlink breaks when the folder is opened from cloud storage like Google Drive)
   are all CJK-friendly.
 - `assets/marp/theme.css` declares theme name `input` and is the default when no
   `marp_template_path` is given; a custom theme must declare its own `/* @theme <name> */`.
-- **Theme width must convert to an integer pixel count** — newer Chrome rejects fractional
-  device-metrics widths during PNG export. That's why the theme is `1023.75pt` (=1365px),
-  not `1024pt` (=1365.33px). Custom themes with pt sizes have the same constraint.
+- **Theme size must convert to an integer pixel count** — newer Chrome rejects fractional
+  device-metrics widths during PNG export. The bundled theme is `960pt × 540pt` (16:9), which
+  is exactly `1280 × 720px` (1pt = 4/3px), and `compile_marp.sh`'s `--image-scale 1.5` lands
+  on a whole `1920 × 1080`. Avoid a size whose px equivalent is fractional (e.g. `1024pt` =
+  `1365.33px`). Custom themes with pt sizes have the same constraint.
+- **The theme is top-anchored, not centered** — `section` overrides the imported marp default
+  theme's vertical centering (`place-content`) with `justify-content: flex-start` so pages of
+  any fullness lay out from the top. Content that exceeds the box is clipped at the bottom;
+  `scripts/check_fit.py` is the guard, and `references/marp-and-overlays.md` §"Layout & density"
+  is the authoring budget that keeps pages fitting.
 
 ## Project map
 

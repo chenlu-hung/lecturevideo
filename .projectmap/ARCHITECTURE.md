@@ -16,6 +16,7 @@ Everything runs locally — no external plugins or services.
 ## Entry points
 - `SKILL.md` — the actual skill entry point; defines the phases and orchestrates everything below.
 - `scripts/compile_marp.sh` — `slides.md` → `slides.html` + `slides.pdf` + per-page PNGs (wraps marp-cli).
+- `scripts/check_fit.py` — `slides.html` → overflow report (headless Chrome); exit `3` if any page's content runs past the slide box. Run after compile_marp.
 - `scripts/split_slides.py` — `slides.md` → `.slides.json` (pages + overlays + mathwrites).
 - `scripts/render_mathwrite.py` — mathwrite TeX segments → `.mathwrite.json` (MathJax SVGs + on-slide bboxes via headless Chrome); only needed when the deck declares mathwrite blocks.
 - `scripts/plan_subagent_batches.py` — `.slides.json` → narration batch plan (stdout JSON).
@@ -58,6 +59,6 @@ the player is static JS/CSS/HTML. End-to-end a topic produces `output/<slug>/` (
 
 | Module | Files | Doc | One-liner |
 |---|---|---|---|
-| `assets/player` | 1 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`, incl. time-driven hand-written-math drawing and a deterministic frame-export hook for MP4 capture. |
-| `scripts` | 7 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video), plus mathwrite SVG/bbox rendering and a Node MP4 exporter. |
+| `assets/player` | 2 | [doc](modules/assets__player.md) | Browser-side auto-play video player (`player.js`) driven by the injected `TIMELINE`, incl. time-driven hand-written-math drawing and a deterministic frame-export hook for MP4 capture. |
+| `scripts` | 9 | [doc](modules/scripts.md) | Stdlib-only Python CLIs that do the pipeline's deterministic transforms (slides→json→timeline→video), plus a headless-Chrome slide-overflow guard, mathwrite SVG/bbox rendering, and a Node MP4 exporter. |
 <!-- projectmap:modules:end -->
