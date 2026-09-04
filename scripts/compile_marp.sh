@@ -34,7 +34,21 @@ mkdir -p "$OUT_DIR" "$OUT_DIR/slides.images"
 # be re-resolved against the new cwd and silently skip the reveal-PNG move).
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
-MARP=(npx --yes @marp-team/marp-cli@latest)
+# Prefer an installed marp over npx. `npx --yes …@latest` re-resolves the package
+# against the registry on every run, which can hang indefinitely at 0% CPU with no
+# error and no timeout — it just looks like a very slow render. $MARP_BIN overrides.
+if [[ -n "${MARP_BIN:-}" ]]; then
+  MARP=("$MARP_BIN")
+elif command -v marp >/dev/null 2>&1; then
+  MARP=(marp)
+else
+  MARP=(npx --yes @marp-team/marp-cli@latest)
+fi
+
+# --no-stdin is not optional here. Without it marp-cli blocks forever waiting on
+# stdin whenever stdin is not closed (any non-interactive / backgrounded run):
+# 0% CPU, no timeout, no error — it just looks like a very slow render.
+MARP+=(--no-stdin)
 
 echo "[compile_marp] HTML →  $OUT_DIR/slides.html"
 "${MARP[@]}" "$SLIDES_MD" \

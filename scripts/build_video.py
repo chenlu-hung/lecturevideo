@@ -67,15 +67,20 @@ def main(argv: list[str]) -> int:
         shutil.copy2(src, video_dir / fname)
 
     # Narration audio (optional): produced by synthesize_tts.py. When present the player
-    # runs in audio mode; when absent it falls back to its internal timer clock. Always
-    # reconcile the video/ copy so a stale track from a previous TTS run is not left behind.
-    narration_src = topic_dir / "narration.wav"
-    narration_dst = video_dir / "narration.wav"
-    if narration_src.is_file():
-        shutil.copy2(narration_src, narration_dst)
-        print(f"[build_video] included narration audio ({narration_src.name})")
-    elif narration_dst.exists():
-        narration_dst.unlink()
+    # runs in audio mode; when absent it falls back to its internal timer clock. mp3 is the
+    # default delivery format and wins when both exist; index.html lists a <source> for each,
+    # so the player picks up whichever landed here. Always reconcile *both* names in video/
+    # so a stale track (or a stale format) from a previous TTS run is not left behind.
+    copied = None
+    for fname in ("narration.mp3", "narration.wav"):
+        src, dst = topic_dir / fname, video_dir / fname
+        if src.is_file() and copied is None:
+            shutil.copy2(src, dst)
+            copied = fname
+        elif dst.exists():
+            dst.unlink()
+    if copied:
+        print(f"[build_video] included narration audio ({copied})")
 
     # Inject timeline into index.html.
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))

@@ -14,8 +14,11 @@ Reads:
     <topic_dir>/scripts/NN.srt      — per-page narration, each starting at 00:00:00,000
 
 Writes:
-    <topic_dir>/narration.wav       — one concatenated track (16-bit PCM mono 22.05 kHz)
-    <topic_dir>/timeline.json       — global timeline whose times match `narration.wav`
+    <topic_dir>/narration.mp3       — the delivered track (default; --audio-format wav/both
+                                      keeps narration.wav, 16-bit PCM mono 22.05 kHz, instead
+                                      of/alongside it). Whichever is delivered is named by
+                                      timeline.json's "audio" field.
+    <topic_dir>/timeline.json       — global timeline whose times match the narration track
     <topic_dir>/.tts_segments/      — combined.srt + per-cue wavs (kept for incremental reruns)
 
 How it stays in sync with the rest of the pipeline:
@@ -88,10 +91,45 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="Traditional→Simplified before TTS. IndexTTS-2's tokenizer is "
                         "Simplified-only, so Traditional chars are out-of-vocab and "
                         "mispronounced. 'auto' converts via opencc when available.")
+    # Delivered narration track.
+    p.add_argument("--audio-format", choices=["mp3", "wav", "both"], default="mp3",
+                   help="format of the narration track handed to the player. 'mp3' "
+                        "(default) transcodes and drops the intermediate wav — a 50-min "
+                        "lecture goes from ~135 MB to ~25 MB, which matters when the topic "
+                        "folder lives in cloud storage. 'wav' keeps the legacy lossless-only "
+                        "behaviour; 'both' keeps each. Falls back to wav with a warning when "
+                        "ffmpeg is unavailable.")
+    p.add_argument("--mp3-bitrate", default="96k",
+                   help="libmp3lame bitrate for --audio-format mp3/both "
+                        "(default 96k; ample for single-voice mono speech)")
+    p.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg binary (default: ffmpeg on PATH)")
     # Workflow.
     p.add_argument("--skip-synth", action="store_true",
                    help="reuse existing per-cue wavs; only re-concat + re-time")
     return p.parse_args(argv)
+
+
+def encode_mp3(wav_path: Path, mp3_path: Path, ffmpeg: str, bitrate: str) -> bool:
+    """Transcode the concatenated narration to mp3. Returns True on success.
+
+    Deliberately non-fatal: the wav is already on disk and the pipeline works fine
+    with it, so a missing or failing ffmpeg degrades to the wav rather than losing
+    a multi-hour synthesis run.
+    """
+    if shutil.which(ffmpeg) is None:
+        print(f"[synthesize_tts] WARN: {ffmpeg} not found — keeping {wav_path.name} "
+              f"(pass --audio-format wav to silence this)", file=sys.stderr)
+        return False
+    print(f"[synthesize_tts] encoding mp3 ({bitrate}) …")
+    result = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-nostats",
+                             "-i", str(wav_path), "-c:a", "libmp3lame",
+                             "-b:a", bitrate, str(mp3_path)])
+    if result.returncode != 0 or not mp3_path.is_file():
+        print(f"[synthesize_tts] WARN: ffmpeg exited {result.returncode} — "
+              f"keeping {wav_path.name}", file=sys.stderr)
+        mp3_path.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def to_simplified(texts: list[str], mode: str) -> list[str]:
@@ -135,7 +173,11 @@ def resolve_indextts2(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     if args.indextts2_bin:
         binary = Path(args.indextts2_bin).resolve()
     elif base:
-        binary = base / ".build/xcode/Build/Products/Debug/indextts2"
+        # Prefer the Release build: same output, ~20% less wall clock on a batch.
+        # Fall back to Debug so a checkout that only ran `./build.sh Debug` works.
+        built = base / ".build/xcode/Build/Products"
+        release = built / "Release/indextts2"
+        binary = release if release.is_file() else built / "Debug/indextts2"
     else:
         raise SystemExit(
             "ERROR: provide --indextts2-dir (or $INDEXTTS2_DIR) or --indextts2-bin"
@@ -169,7 +211,7 @@ def main(argv: list[str]) -> int:
     binary, model_dir, preproc_dir = resolve_indextts2(args)
     if not args.skip_synth and not binary.is_file():
         print(f"ERROR: IndexTTS-2 binary not found: {binary}", file=sys.stderr)
-        print("       build it with `./build.sh Debug` in the IndexTTS-2 MLX checkout.",
+        print("       build it with `./build.sh Release` in the IndexTTS-2 MLX checkout.",
               file=sys.stderr)
         return 1
 
@@ -304,6 +346,22 @@ def main(argv: list[str]) -> int:
         out.close()
     page_start.append(total)  # sentinel: end of the last page
 
+    # ---- 4b. Deliver the track in the requested format. ----
+    # The timeline's "audio" field, the player's <source>, build_video.py and
+    # export_mp4.mjs must all name the same file, so settle it here and let the
+    # name flow downstream. mp3 keeps the wav only when asked for 'both'.
+    mp3_path = narration_path.with_suffix(".mp3")
+    audio_name = narration_path.name
+    if args.audio_format in ("mp3", "both"):
+        if encode_mp3(narration_path, mp3_path, args.ffmpeg, args.mp3_bitrate):
+            audio_name = mp3_path.name
+            if args.audio_format == "mp3":
+                narration_path.unlink()
+        elif args.audio_format == "mp3":
+            pass  # encode_mp3 already warned; the wav stands in
+    if args.audio_format == "wav":
+        mp3_path.unlink(missing_ok=True)   # drop a stale mp3 from an earlier run
+
     # ---- 5. Build the timeline from real audio frames. ----
     def t(frame: int) -> float:
         return round(frame / fr, 3)
@@ -376,7 +434,7 @@ def main(argv: list[str]) -> int:
 
     timeline = {
         "total_duration": t(total),
-        "audio": "narration.wav",
+        "audio": audio_name,
         "slides": timeline_slides,
         "overlays": timeline_overlays,
         "captions": timeline_captions,
@@ -385,7 +443,9 @@ def main(argv: list[str]) -> int:
         timeline["mathwrites"] = timeline_mathwrites
     timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[synthesize_tts] wrote {narration_path} ({t(total)}s, {nch}ch/{sw*8}bit/{fr}Hz)")
+    delivered = mp3_path if audio_name.endswith(".mp3") else narration_path
+    print(f"[synthesize_tts] wrote {delivered} ({t(total)}s, {nch}ch/{sw*8}bit/{fr}Hz source"
+          f"{', mp3 ' + args.mp3_bitrate if delivered is mp3_path else ''})")
     print(f"[synthesize_tts] wrote {timeline_path}: {len(timeline_slides)} slides, "
           f"{len(timeline_overlays)} overlays, {len(timeline_captions)} captions")
     if missing:

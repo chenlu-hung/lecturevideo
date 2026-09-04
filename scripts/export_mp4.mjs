@@ -7,7 +7,7 @@
 //
 // Reads:
 //   <topic_dir>/video/index.html   — the player built by build_video.py
-//   <topic_dir>/video/narration.wav — muxed in as audio when present (voiced path)
+//   <topic_dir>/video/narration.{mp3,wav} — muxed in as audio when present (voiced path)
 //
 // Writes:
 //   <topic_dir>/video/lecture.mp4  — H.264 (yuv420p) + AAC, or video-only when silent
@@ -18,30 +18,48 @@
 // hand-written-math half-stroke states. Drives Chrome over the DevTools Protocol
 // using Node's built-in WebSocket (no npm dependency); needs only Chrome + ffmpeg.
 //
+// Where the time goes (measured on an 8-core M1, 1920x1080): capturing a frame
+// costs ~85ms (PNG) while the renderAt CDP round-trip is ~0.5ms and libx264
+// keeps up at ~145fps — so screenshotting is ~99% of the wall clock, and one
+// Chrome saturates only one core. Two consequences shape this script:
+//   * The frame range is split across N Chrome instances, each encoding its own
+//     chunk .mp4; the chunks are concatenated (stream copy) and the narration
+//     muxed in at the end. 6 workers measured ~4.7x one worker on that M1.
+//   * Capture is JPEG by default (~1.25x faster than PNG, and the frames are
+//     re-encoded lossily by libx264 anyway). --png restores lossless capture.
+// On top of that, it only screenshots frames that actually change: every
+// mathwrite (hand-written math) frame is rendered per-frame (the sole true f(t)
+// animation), while static stretches reuse one cached screenshot.
+//
 // Options:
 //   --fps <n>        frames per second (default 30)
 //   --width <px>     capture width  (default: auto from the slide aspect ratio)
 //   --height <px>    capture height (default: auto, slide height capped at 1080)
 //   --crf <n>        libx264 quality, lower = better (default 18)
 //   --preset <name>  libx264 preset (default medium)
+//   --workers <n>    parallel Chrome instances (default: min(6, cores - 2))
+//   --jpeg-quality <n>  capture quality 1-100 (default 92)
+//   --png            capture lossless PNG instead of JPEG (slower)
 //   --out <path>     output file (default <topic_dir>/video/lecture.mp4)
 //   --chrome <path>  Chrome/Chromium binary (default: auto-detect / $CHROME_PATH)
 //   --ffmpeg <path>  ffmpeg binary (default: ffmpeg on PATH)
-//   --keep-frames    also write PNG frames to <topic_dir>/video/.frames/
+//   --keep-frames    also write captured frames to <topic_dir>/video/.frames/
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, openSync, readSync, closeSync, readFileSync, rmSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 // ---------- arg parsing ----------
+const DEFAULT_WORKERS = Math.max(1, Math.min(6, (os.availableParallelism?.() ?? os.cpus().length) - 2));
+
 function parseArgs(argv) {
   const opts = {
     fps: 30, width: null, height: null, crf: 18, preset: "medium",
+    workers: DEFAULT_WORKERS, jpegQuality: 92, png: false,
     out: null, chrome: null, ffmpeg: "ffmpeg", keepFrames: false, topic: null,
   };
   const rest = [];
@@ -54,6 +72,9 @@ function parseArgs(argv) {
       case "--height": opts.height = parseInt(next(), 10); break;
       case "--crf": opts.crf = parseInt(next(), 10); break;
       case "--preset": opts.preset = next(); break;
+      case "--workers": opts.workers = parseInt(next(), 10); break;
+      case "--jpeg-quality": opts.jpegQuality = parseInt(next(), 10); break;
+      case "--png": opts.png = true; break;
       case "--out": opts.out = next(); break;
       case "--chrome": opts.chrome = next(); break;
       case "--ffmpeg": opts.ffmpeg = next(); break;
@@ -71,6 +92,7 @@ function parseArgs(argv) {
 const USAGE =
   "Usage: node scripts/export_mp4.mjs <topic_dir> " +
   "[--fps 30] [--width PX] [--height PX] [--crf 18] [--preset medium] " +
+  `[--workers ${DEFAULT_WORKERS}] [--jpeg-quality 92] [--png] ` +
   "[--out FILE] [--chrome PATH] [--ffmpeg PATH] [--keep-frames]\n" +
   "  default size: auto from slide aspect ratio (height capped at 1080)";
 
@@ -187,6 +209,222 @@ function launchChrome(chromePath, userDataDir) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---------- teardown ----------
+// Every worker owns a Chrome process and a temp profile dir; a Ctrl-C between
+// start() and stop() would otherwise leave both behind. Signals get the
+// synchronous path — the async cleanup in main()'s finally never gets to run.
+const liveWorkers = new Set();
+const tempPaths = new Set();
+
+function cleanupSync() {
+  for (const w of liveWorkers) { try { w.proc?.kill("SIGKILL"); } catch { /* already gone */ } }
+  for (const p of [...liveWorkers].map((w) => w.userDataDir).concat([...tempPaths])) {
+    try { rmSync(p, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => { cleanupSync(); process.exit(130); });
+}
+
+// ---------- capture plan: which frames actually change ----------
+// Mathwrite segs are the only true f(t) animation, so their windows are captured
+// per-frame; every other stretch between two change points (slide/overlay/caption
+// boundaries) is one still, screenshotted once and repeated. Shared read-only by
+// all workers — each keeps its own screenshot cache, since a worker only ever
+// touches the segments its own frame range covers.
+function buildPlan(timeline, total, fps) {
+  const animatedWindows = [];
+  const staticSegments = []; // { a, b, tShot }
+
+  if (timeline) {
+    const eps = 1 / fps;
+    const rawWindows = [];
+    for (const mw of timeline.mathwrites || []) {
+      for (const seg of mw.segs || []) {
+        if (typeof seg.start === "number" && typeof seg.end === "number") {
+          rawWindows.push([seg.start - eps, seg.end + eps]);
+        }
+      }
+    }
+    rawWindows.sort((a, b) => a[0] - b[0]);
+    for (const w of rawWindows) {
+      const last = animatedWindows[animatedWindows.length - 1];
+      if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1]);
+      else animatedWindows.push([...w]);
+    }
+
+    const isAnim = (t) => animatedWindows.some((w) => t >= w[0] && t <= w[1]);
+
+    const bounds = new Set([0, total]);
+    for (const s of timeline.slides || []) { if (typeof s.start === "number") bounds.add(s.start); if (typeof s.end === "number") bounds.add(s.end); }
+    for (const o of timeline.overlays || []) { if (typeof o.start === "number") bounds.add(o.start); if (typeof o.end === "number") bounds.add(o.end); }
+    for (const c of timeline.captions || []) { if (typeof c.start === "number") bounds.add(c.start); if (typeof c.end === "number") bounds.add(c.end); }
+    for (const mw of timeline.mathwrites || []) {
+      for (const seg of mw.segs || []) {
+        if (typeof seg.start === "number") bounds.add(seg.start);
+        if (typeof seg.end === "number") bounds.add(seg.end);
+      }
+    }
+    const sortedBounds = Array.from(bounds).sort((a, b) => a - b);
+
+    for (let i = 0; i < sortedBounds.length - 1; i++) {
+      const a = sortedBounds[i];
+      const b = sortedBounds[i + 1];
+      if (a === b) continue;
+      if (!isAnim((a + b) / 2)) {
+        const tShot = b - a < 0.05 ? Math.max(a, b - 1e-3) : Math.min(a + 0.32, (a + b) / 2);
+        staticSegments.push({ a, b, tShot });
+      }
+    }
+  }
+
+  const isAnimated = (t) => animatedWindows.some((w) => t >= w[0] && t <= w[1]);
+
+  // Segments are sorted and disjoint; a worker starts mid-array, so seek by
+  // bisection once and let it walk forward from there.
+  const segmentIndexAt = (t) => {
+    let lo = 0, hi = staticSegments.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const s = staticSegments[mid];
+      if (t < s.a) hi = mid - 1;
+      else if (t >= s.b) lo = mid + 1;
+      else return mid;
+    }
+    return -1;
+  };
+
+  return { animatedWindows, staticSegments, isAnimated, segmentIndexAt, enabled: timeline !== null };
+}
+
+// Split [0, n) into k contiguous frame ranges, longest first by remainder.
+function splitFrames(n, k) {
+  const out = [];
+  const base = Math.floor(n / k);
+  const extra = n % k;
+  let s = 0;
+  for (let i = 0; i < k; i++) {
+    const len = base + (i < extra ? 1 : 0);
+    if (len > 0) out.push([s, s + len]);
+    s += len;
+  }
+  return out;
+}
+
+// ---------- one Chrome instance rendering one contiguous frame range ----------
+class Worker {
+  constructor(id, ctx) {
+    this.id = id;
+    this.ctx = ctx;              // { chromePath, indexHtml, width, height, opts, ffmpegArgs }
+    this.proc = null;
+    this.sess = null;
+    this.userDataDir = path.join(os.tmpdir(), `lecture-export-${process.pid}-${id}`);
+    this.total = 0;
+    this.segCache = new Map();   // segment index -> captured buffer
+    this.shots = 0;
+  }
+
+  async start() {
+    const { chromePath, indexHtml, width, height } = this.ctx;
+    const { proc, wsUrl } = await launchChrome(chromePath, this.userDataDir);
+    this.proc = proc;
+    liveWorkers.add(this);
+    const cdp = new CDP(await connect(wsUrl));
+    const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
+    const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+    this.sess = (method, params) => cdp.send(method, params, sessionId);
+
+    await this.sess("Page.enable", {});
+    await this.sess("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+
+    const loaded = new Promise((res) => cdp.on("Page.loadEventFired", () => res()));
+    await this.sess("Page.navigate", { url: pathToFileURL(indexHtml).href });
+    await loaded;
+
+    // Wait for the player to install its export hook, then strip the chrome.
+    for (let tries = 0; tries < 50; tries++) {
+      const { result } = await this.sess("Runtime.evaluate", {
+        expression: "window.__lectureExport ? window.__lectureExport.prepare() : -1",
+        returnByValue: true,
+      });
+      if (result && result.value >= 0) { this.total = result.value; break; }
+      await sleep(100);
+    }
+    if (!(this.total > 0)) throw new Error(`worker ${this.id}: player export hook unavailable or total_duration is 0`);
+  }
+
+  async capture(t) {
+    await this.sess("Runtime.evaluate", {
+      expression: `window.__lectureExport.renderAt(${t})`,
+      awaitPromise: true,
+    });
+    const { data } = await this.sess("Page.captureScreenshot", {
+      ...this.ctx.captureFormat, captureBeyondViewport: false,
+    });
+    this.shots++;
+    return Buffer.from(data, "base64");
+  }
+
+  // Render [frameStart, frameEnd) into its own chunk file through its own ffmpeg.
+  async renderChunk([frameStart, frameEnd], plan, chunkPath, onFrame) {
+    const { opts, ffmpegArgs, framesDir, frameExt } = this.ctx;
+    const ffmpeg = spawn(opts.ffmpeg, [...ffmpegArgs, chunkPath], { stdio: ["pipe", "inherit", "inherit"] });
+    const done = new Promise((res, rej) => {
+      ffmpeg.on("error", rej);
+      ffmpeg.on("exit", (code) => (code === 0 ? res() : rej(new Error(`ffmpeg (worker ${this.id}) exited ${code}`))));
+    });
+    const writeFrame = (buf) =>
+      new Promise((res) => { ffmpeg.stdin.write(buf) ? res() : ffmpeg.stdin.once("drain", res); });
+
+    let segIdx = plan.enabled ? plan.segmentIndexAt(frameStart / opts.fps) : -1;
+
+    try {
+      for (let i = frameStart; i < frameEnd; i++) {
+        const t = i / opts.fps;
+        let buf;
+
+        if (!plan.enabled || plan.isAnimated(t)) {
+          buf = await this.capture(t);
+        } else {
+          // Walk forward to the segment holding t; a boundary-precision miss
+          // (no segment covers t) falls back to capturing the frame outright.
+          while (segIdx >= 0 && segIdx < plan.staticSegments.length && plan.staticSegments[segIdx].b <= t) segIdx++;
+          const seg = segIdx >= 0 && segIdx < plan.staticSegments.length && plan.staticSegments[segIdx].a <= t
+            ? plan.staticSegments[segIdx] : null;
+          if (!seg) {
+            buf = await this.capture(t);
+          } else {
+            if (!this.segCache.has(segIdx)) this.segCache.set(segIdx, await this.capture(seg.tShot));
+            buf = this.segCache.get(segIdx);
+          }
+        }
+
+        await writeFrame(buf);
+        if (framesDir) await writeFile(path.join(framesDir, `${String(i).padStart(6, "0")}.${frameExt}`), buf);
+        onFrame();
+      }
+    } finally {
+      ffmpeg.stdin.end();
+    }
+    await done;
+  }
+
+  async stop() {
+    liveWorkers.delete(this);
+    try { this.proc?.kill("SIGKILL"); } catch { /* already gone */ }
+    await rm(this.userDataDir, { recursive: true, force: true });
+  }
+}
+
+function run(bin, args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(bin, args, { stdio: ["ignore", "inherit", "inherit"] });
+    p.on("error", reject);
+    p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${path.basename(bin)} exited ${code}`))));
+  });
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.topic) { console.log(USAGE); process.exit(opts.help ? 0 : 2); }
@@ -194,9 +432,14 @@ async function main() {
   const topicDir = path.resolve(opts.topic);
   const videoDir = path.join(topicDir, "video");
   const indexHtml = path.join(videoDir, "index.html");
-  const audioPath = path.join(videoDir, "narration.wav");
+  // build_video.py copies exactly one narration track in; mp3 is the default delivery
+  // format, wav the --audio-format wav/both legacy. Take whichever is there.
+  const audioPath = ["narration.mp3", "narration.wav"]
+    .map((f) => path.join(videoDir, f))
+    .find((p) => existsSync(p)) ?? null;
   const outPath = opts.out ? path.resolve(opts.out) : path.join(videoDir, "lecture.mp4");
-  const framesDir = path.join(videoDir, ".frames");
+  const framesDir = opts.keepFrames ? path.join(videoDir, ".frames") : null;
+  const chunkDir = path.join(videoDir, ".export-chunks");
 
   if (!existsSync(indexHtml)) {
     console.error(`ERROR: ${indexHtml} not found — run build_video.py first`);
@@ -207,215 +450,95 @@ async function main() {
     console.error("ERROR: no Chrome/Chromium found. Install Google Chrome or pass --chrome / set CHROME_PATH.");
     process.exit(1);
   }
-  const hasAudio = existsSync(audioPath);
-  if (opts.keepFrames) { await rm(framesDir, { recursive: true, force: true }); await mkdir(framesDir, { recursive: true }); }
+  const hasAudio = audioPath !== null;
+  if (framesDir) { await rm(framesDir, { recursive: true, force: true }); await mkdir(framesDir, { recursive: true }); }
+  await rm(chunkDir, { recursive: true, force: true });
+  await mkdir(chunkDir, { recursive: true });
+  tempPaths.add(chunkDir);
 
   const { width, height } = resolveSize(path.join(videoDir, "slides"), opts.width, opts.height);
+  const captureFormat = opts.png
+    ? { format: "png" }
+    : { format: "jpeg", quality: Math.max(1, Math.min(100, opts.jpegQuality)) };
+  const frameExt = opts.png ? "png" : "jpg";
+
+  // Every chunk is encoded with identical parameters so the concat demuxer can
+  // stream-copy them into one file without re-encoding. -threads is filled in
+  // once the worker count is known (below): N concurrent libx264 encoders each
+  // defaulting to every core oversubscribes the machine badly.
+  const buildFfmpegArgs = (threads) => [
+    "-y", "-loglevel", "error", "-nostats",
+    "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "pipe:0",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", String(opts.crf),
+    "-preset", opts.preset, "-threads", String(threads),
+    // libx264 + yuv420p needs even dimensions (1365 is odd) — pad to the next even size.
+    "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+  ];
 
   console.log(`[export_mp4] chrome: ${chromePath}`);
-  console.log(`[export_mp4] ${width}x${height} @ ${opts.fps}fps, audio: ${hasAudio ? "narration.wav" : "none"}`);
+  console.log(`[export_mp4] ${width}x${height} @ ${opts.fps}fps, capture: ${opts.png ? "png" : `jpeg q${captureFormat.quality}`}, audio: ${hasAudio ? path.basename(audioPath) : "none"}`);
 
-  // ---- launch + attach ----
-  const userDataDir = path.join(os.tmpdir(), `lecture-export-${process.pid}`);
-  const { proc: chrome, wsUrl } = await launchChrome(chromePath, userDataDir);
-  const cleanup = async () => {
-    try { chrome.kill("SIGKILL"); } catch {}
-    await rm(userDataDir, { recursive: true, force: true });
-  };
+  const ctx = { chromePath, indexHtml, width, height, opts, ffmpegArgs: null, framesDir, frameExt, captureFormat };
+  const workers = [];
 
   try {
-    const browserWs = await connect(wsUrl);
-    const cdp = new CDP(browserWs);
+    // The first worker doubles as the probe for the timeline total.
+    const lead = new Worker(0, ctx);
+    workers.push(lead);
+    await lead.start();
 
-    const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
-    const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-    const sess = (method, params) => cdp.send(method, params, sessionId);
-
-    await sess("Page.enable", {});
-    await sess("Emulation.setDeviceMetricsOverride", {
-      width, height, deviceScaleFactor: 1, mobile: false,
-    });
-
-    const loaded = new Promise((res) => cdp.on("Page.loadEventFired", () => res()));
-    await sess("Page.navigate", { url: pathToFileURL(indexHtml).href });
-    await loaded;
-
-    // Wait for the player to install its export hook, then strip the chrome.
-    let total = 0;
-    for (let tries = 0; tries < 50; tries++) {
-      const { result } = await sess("Runtime.evaluate", {
-        expression: "window.__lectureExport ? window.__lectureExport.prepare() : -1",
-        returnByValue: true,
-      });
-      if (result && result.value >= 0) { total = result.value; break; }
-      await sleep(100);
-    }
-    if (!(total > 0)) throw new Error("player export hook unavailable or total_duration is 0");
-
+    const total = lead.total;
     const nFrames = Math.max(1, Math.round(total * opts.fps));
-    console.log(`[export_mp4] total ${total.toFixed(2)}s → ${nFrames} frames`);
 
-    // ---- prepare timeline for static caching ----
     let timeline = null;
     try {
       const tlPath = path.join(topicDir, "timeline.json");
-      if (existsSync(tlPath)) {
-        timeline = JSON.parse(readFileSync(tlPath, "utf-8"));
-      }
+      if (existsSync(tlPath)) timeline = JSON.parse(readFileSync(tlPath, "utf-8"));
     } catch (e) {
       console.warn(`[export_mp4] WARN: could not read timeline.json, falling back to full render: ${e.message}`);
     }
+    const plan = buildPlan(timeline, total, opts.fps);
 
-    const animatedWindows = [];
-    const staticSegments = []; // { a, b, tShot, cachedBuf }
+    const nWorkers = Math.max(1, Math.min(opts.workers, nFrames));
+    const ranges = splitFrames(nFrames, nWorkers);
+    console.log(`[export_mp4] total ${total.toFixed(2)}s → ${nFrames} frames across ${ranges.length} worker(s)`);
 
-    if (timeline) {
-      const eps = 1 / opts.fps;
-      // 1. Build animated windows
-      const rawWindows = [];
-      for (const mw of timeline.mathwrites || []) {
-        for (const seg of mw.segs || []) {
-          if (typeof seg.start === "number" && typeof seg.end === "number") {
-            rawWindows.push([seg.start - eps, seg.end + eps]);
-          }
-        }
-      }
-      rawWindows.sort((a, b) => a[0] - b[0]);
-      for (const w of rawWindows) {
-        if (!animatedWindows.length) {
-          animatedWindows.push([...w]);
-        } else {
-          const last = animatedWindows[animatedWindows.length - 1];
-          if (w[0] <= last[1]) {
-            last[1] = Math.max(last[1], w[1]);
-          } else {
-            animatedWindows.push([...w]);
-          }
-        }
-      }
+    const cores = os.availableParallelism?.() ?? os.cpus().length;
+    ctx.ffmpegArgs = buildFfmpegArgs(Math.max(1, Math.floor(cores / ranges.length)));
 
-      const isAnimated = (t) => {
-        for (const w of animatedWindows) {
-          if (t >= w[0] && t <= w[1]) return true;
-        }
-        return false;
-      };
+    for (let i = workers.length; i < ranges.length; i++) workers.push(new Worker(i, ctx));
+    await Promise.all(workers.slice(1).map((w) => w.start()));
 
-      // 2. Build static change-point boundaries
-      const bounds = new Set([0, total]);
-      for (const s of timeline.slides || []) { if (typeof s.start === "number") bounds.add(s.start); if (typeof s.end === "number") bounds.add(s.end); }
-      for (const o of timeline.overlays || []) { if (typeof o.start === "number") bounds.add(o.start); if (typeof o.end === "number") bounds.add(o.end); }
-      for (const c of timeline.captions || []) { if (typeof c.start === "number") bounds.add(c.start); if (typeof c.end === "number") bounds.add(c.end); }
-      for (const mw of timeline.mathwrites || []) {
-        for (const seg of mw.segs || []) {
-          if (typeof seg.start === "number") bounds.add(seg.start);
-          if (typeof seg.end === "number") bounds.add(seg.end);
-        }
-      }
-      const sortedBounds = Array.from(bounds).sort((a, b) => a - b);
-
-      for (let i = 0; i < sortedBounds.length - 1; i++) {
-        const a = sortedBounds[i];
-        const b = sortedBounds[i + 1];
-        if (a === b) continue;
-        const mid = (a + b) / 2;
-        if (!isAnimated(mid)) {
-          let tShot;
-          if (b - a < 0.05) tShot = Math.max(a, b - 1e-3);
-          else tShot = Math.min(a + 0.32, (a + b) / 2);
-          staticSegments.push({ a, b, tShot, cachedBuf: null });
-        }
-      }
-    }
-
-    // ---- ffmpeg: read PNG frames from stdin, mux audio, encode H.264 ----
-    const ff = [
-      "-y", "-loglevel", "error", "-nostats",
-      "-f", "image2pipe", "-framerate", String(opts.fps), "-i", "pipe:0",
-    ];
-    if (hasAudio) ff.push("-i", audioPath);
-    ff.push(
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", String(opts.crf),
-      "-preset", opts.preset, "-movflags", "+faststart",
-      // libx264 + yuv420p needs even dimensions (1365 is odd) — pad to the next even size.
-      "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-    );
-    if (hasAudio) ff.push("-c:a", "aac", "-b:a", "192k", "-shortest");
-    ff.push(outPath);
-
-    const ffmpeg = spawn(opts.ffmpeg, ff, { stdio: ["pipe", "inherit", "inherit"] });
-    const ffmpegDone = new Promise((res, rej) => {
-      ffmpeg.on("error", rej);
-      ffmpeg.on("exit", (code) => (code === 0 ? res() : rej(new Error(`ffmpeg exited ${code}`))));
-    });
-
-    const writeFrame = (buf) =>
-      new Promise((res) => { ffmpeg.stdin.write(buf) ? res() : ffmpeg.stdin.once("drain", res); });
-
-    // ---- step + screenshot every frame ----
     const t0 = Date.now();
-    let screenshotsTaken = 0;
-    let currentSegmentIdx = 0;
-
-    for (let i = 0; i < nFrames; i++) {
-      const t = i / opts.fps;
-      let isAnim = true;
-      let seg = null;
-
-      if (timeline) {
-        isAnim = false;
-        for (const w of animatedWindows) {
-          if (t >= w[0] && t <= w[1]) { isAnim = true; break; }
-        }
-        if (!isAnim) {
-          while (currentSegmentIdx < staticSegments.length && staticSegments[currentSegmentIdx].b <= t) {
-            currentSegmentIdx++;
-          }
-          if (currentSegmentIdx < staticSegments.length && staticSegments[currentSegmentIdx].a <= t) {
-            seg = staticSegments[currentSegmentIdx];
-          } else {
-            isAnim = true; // fallback if boundary precision misses
-          }
-        }
+    let doneFrames = 0;
+    const onFrame = () => {
+      doneFrames++;
+      if (doneFrames % opts.fps === 0 || doneFrames === nFrames) {
+        const pct = ((doneFrames / nFrames) * 100).toFixed(0);
+        process.stdout.write(`\r[export_mp4] frame ${doneFrames}/${nFrames} (${pct}%)   `);
       }
+    };
 
-      let buf;
-      if (isAnim) {
-        await sess("Runtime.evaluate", {
-          expression: `window.__lectureExport.renderAt(${t})`,
-          awaitPromise: true,
-        });
-        const { data } = await sess("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-        buf = Buffer.from(data, "base64");
-        screenshotsTaken++;
-      } else {
-        if (!seg.cachedBuf) {
-          await sess("Runtime.evaluate", {
-            expression: `window.__lectureExport.renderAt(${seg.tShot})`,
-            awaitPromise: true,
-          });
-          const { data } = await sess("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-          seg.cachedBuf = Buffer.from(data, "base64");
-          screenshotsTaken++;
-        }
-        buf = seg.cachedBuf;
-      }
-
-      await writeFrame(buf);
-      if (opts.keepFrames) await writeFile(path.join(framesDir, `${String(i).padStart(6, "0")}.png`), buf);
-      if (i % opts.fps === 0 || i === nFrames - 1) {
-        const pct = (((i + 1) / nFrames) * 100).toFixed(0);
-        process.stdout.write(`\r[export_mp4] frame ${i + 1}/${nFrames} (${pct}%)   `);
-      }
-    }
+    const chunkPaths = ranges.map((_, i) => path.join(chunkDir, `chunk_${String(i).padStart(3, "0")}.mp4`));
+    await Promise.all(ranges.map((r, i) => workers[i].renderChunk(r, plan, chunkPaths[i], onFrame)));
     process.stdout.write("\n");
 
-    ffmpeg.stdin.end();
-    await ffmpegDone;
+    // ---- concat the chunks (stream copy) and mux the narration ----
+    const listPath = path.join(chunkDir, "chunks.txt");
+    await writeFile(listPath, chunkPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n");
+    const muxArgs = ["-y", "-loglevel", "error", "-nostats", "-f", "concat", "-safe", "0", "-i", listPath];
+    if (hasAudio) muxArgs.push("-i", audioPath);
+    muxArgs.push("-c:v", "copy", "-movflags", "+faststart");
+    if (hasAudio) muxArgs.push("-c:a", "aac", "-b:a", "192k", "-shortest");
+    muxArgs.push(outPath);
+    await run(opts.ffmpeg, muxArgs);
+
+    const shots = workers.reduce((n, w) => n + w.shots, 0);
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log(`[export_mp4] wrote ${outPath} (screenshots ${screenshotsTaken} / ${nFrames} frames in ${secs}s)`);
+    console.log(`[export_mp4] wrote ${outPath} (screenshots ${shots} / ${nFrames} frames in ${secs}s)`);
   } finally {
-    await cleanup();
+    await Promise.all(workers.map((w) => w.stop()));
+    await rm(chunkDir, { recursive: true, force: true });
   }
 }
 

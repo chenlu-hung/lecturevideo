@@ -17,8 +17,9 @@ How the bundled `assets/player/` works and how `build_video.py` wires it up. Rea
   <div id="overlays"></div>                  <!-- overlay badges + in-place reveal crops -->
   <div id="captions"><span id="caption-text"></span></div>  <!-- subtitle bar -->
 </div>
-<audio id="narration" preload="metadata">    <!-- narration.wav present iff the TTS phase ran -->
-  <source src="narration.wav" type="audio/wav">
+<audio id="narration" preload="metadata">    <!-- present iff the TTS phase ran -->
+  <source src="narration.mp3" type="audio/mpeg">   <!-- default delivery format -->
+  <source src="narration.wav" type="audio/wav">    <!-- --audio-format wav/both -->
 </audio>
 <div id="controls">
   <button id="play">▶</button>
@@ -32,13 +33,13 @@ How the bundled `assets/player/` works and how `build_video.py` wires it up. Rea
 ## Timeline data
 
 `timeline.json` (produced by `derive_timeline.py`, or by `synthesize_tts.py` when TTS is
-enabled — the latter adds an `"audio": "narration.wav"` field and times everything against
+enabled — the latter adds an `"audio": "narration.mp3"` field (or `.wav`) naming the delivered track, and times everything against
 the real synthesized audio) shape:
 
 ```json
 {
   "total_duration": 312.4,
-  "audio": "narration.wav",
+  "audio": "narration.mp3",
   "slides": [
     {"index": 1, "start": 0.0, "end": 32.5, "image": "slides.images/01.png"},
     {"index": 2, "start": 32.5, "end": 71.2, "image": "slides.images/02.png"}
@@ -147,14 +148,19 @@ blank (`compile_marp.sh` hides `.mathwrite` divs for the PNG pass only). Key poi
   pieces (collected in reading order). Each glyph is **truly single-stroke
   hand-written**: `mwCollectNodes` replaces the MathJax glyph outline with its
   **Hershey single-stroke centerline** (`window.HERSHEY_FONT` from
-  `hershey-font.js`; `mwCodeToKey` maps the glyph's codepoint — math-alphanumeric
-  letters/digits fold to ASCII, Greek to `g:<slot>`, a few hand-authored math
-  symbols to `s:<name>`), fit into the glyph's own `getBBox` and **y-flipped**
+  `hershey-font.js`; `mwCodeToKey` maps the glyph's codepoint — upright
+  math-alphanumeric letters/digits fold to ASCII, **math-italic variables to
+  `c:<char>`** so they are written in a joined cursive hand while operators, digits
+  and function names stay upright, Greek (lower and upper case) to `g:<slot>`, a few
+  hand-authored math symbols to `s:<name>`), fit into the glyph's own `getBBox` and **y-flipped**
   (Hershey is y-down, MathJax glyph-local is y-up). That centerline path is
   `fill:none`, stroked at the constant `MW_PEN_EM` (font units → one uniform
-  chalk/marker pen), and revealed by sweeping `stroke-dashoffset` from `len`→`0`
+  chalk/marker pen sized for the tightest loops in the set — the cursive variables
+  and the denser Greek letters; a fatter nib fills those in solid), and revealed by
+  sweeping `stroke-dashoffset` from `len`→`0`
   along the real pen trajectory — **not** an outline trace and **not** a fade. A
-  glyph with no Hershey mapping degrades to a `fade` node (clean opacity ramp,
+  cursive glyph the script font lacks (it covers ASCII only) writes upright, and a
+  glyph with no Hershey mapping at all degrades to a `fade` node (clean opacity ramp,
   never an outline trace); invisible operators (U+2061…) are skipped; fraction-bar
   `<rect>`s grow by width. A single **pen-nib element** (`.mw-pen`) rides the
   **true stroke frontier** — `getPointAtLength` at the nib's distance along the
@@ -167,7 +173,15 @@ blank (`compile_marp.sh` hides `.mathwrite` divs for the PNG pass only). Key poi
   every value is a function of `t` (no one-shot CSS animation), seeking lands on the
   exact partially-written state; the frame export refreshes the nib after layout
   settles. The single-stroke font data is generated offline by
-  `scripts/gen_hershey_font.py` from the bundled public-domain `assets/hershey/*.jhf`.
+  `scripts/gen_hershey_font.py` from the bundled Hershey sources in
+  `assets/hershey/`: `rowmans.jhf` (upright Latin), `greeks.jhf` (Greek) and the
+  single-line SVG font `HersheyScriptMed.svg` (cursive) — all **simplex** cuts, one
+  line per stroke; a Complex/Duplex cut draws each stroke as two parallel lines and
+  the player would write that out as a doubled trajectory. Note `greeks.jhf` lays its
+  glyphs out **by position in the Greek alphabet** over the Latin slots (`'a'`=α,
+  `'b'`=β, `'c'`=γ … `'x'`=ω; uppercase on `A..X`), not by transliteration — reading
+  it as one silently wrote ρ for θ and τ for σ, which α/β/π happen to survive. The
+  `MW_GSEQ`/`MW_GSEQ_UP` tables index those slots and must match the file.
 - A segment with a zero-length window (missing SRT markers — the timeline producers
   warn) appears fully drawn from slide start, so the formula never silently vanishes.
 - Ink colour comes from `--mw-ink` on `#mathwrites` (default near-black).
@@ -186,14 +200,17 @@ planned SRT timestamps:
 2. All cues are synthesized in a **single** `indextts2 --srt` batch call (the model loads once
    per process, so per-cue invocations would be ruinously slow). Output is one
    `combined_<NNN>.wav` per cue.
-3. The per-cue wavs are concatenated with stdlib `wave` into `<slug>/narration.wav`
+3. The per-cue wavs are concatenated with stdlib `wave` into `<slug>/narration.wav`, then
+   transcoded to `narration.mp3` via ffmpeg unless `--audio-format wav` (default `mp3` drops
+   the wav; `both` keeps it). A missing/failing ffmpeg degrades to the wav with a warning
+   rather than losing the run
    (16-bit PCM mono 22.05 kHz), inserting `--cue-gap` silence between cues and `--page-gap`
    between pages.
 4. `timeline.json` is rebuilt from the **actual** frame offsets: each slide's window spans its
    page's audio (slide windows kept contiguous so the player never lands in a gap), and each
    overlay's start/end come from where its opener/closer cue landed in the audio.
 
-`build_video.py` then copies `narration.wav` into `video/` and the player auto-detects it on
+`build_video.py` then copies the delivered track (mp3 preferred) into `video/` and the player auto-detects it on
 load. Because the timeline is derived from the same audio, `audio.duration ≈
 TIMELINE.total_duration` by construction.
 
@@ -234,7 +251,7 @@ stroke-dasharray styles and the mathwrite transform have settled before the scre
    awaitPromise:true)` → `Page.captureScreenshot` → the PNG buffer is piped straight into
    `ffmpeg -f image2pipe` (no temp files unless `--keep-frames`).
 4. ffmpeg encodes `libx264`/`yuv420p` (`-crf 18 -preset medium -movflags +faststart`); if
-   `video/narration.wav` exists it is muxed as AAC with `-shortest` (silent decks export
+   `video/narration.mp3` or `video/narration.wav` exists it is muxed as AAC with `-shortest` (silent decks export
    video-only). Output: `<topic>/video/lecture.mp4`.
 
 A real lecture is many thousands of frames, so this is a minutes-long, compute-heavy step (like
@@ -255,5 +272,5 @@ Tested mental model: any Chromium-based browser, Safari 15+, Firefox 90+.
 
 - Overlay never appears: check `console.log(TIMELINE.overlays)` — if missing, `derive_timeline.py` did not parse the markers. Inspect the SRT for unbalanced `[overlay:*]` tags.
 - Slides advance too fast: usually means a per-page SRT was empty or malformed; `derive_timeline.py` falls back to a default 20-second slide. Re-run the failing sub-agent.
-- Audio drifts from slides: confirm `audio.duration` matches `TIMELINE.total_duration` within 1%. With `synthesize_tts.py` they are derived from the same audio and should match by construction; a mismatch usually means `narration.wav` was rebuilt without re-running `build_video.py` (or vice versa) — re-run both.
-- No audio / player stuck in timer mode: confirm `video/narration.wav` exists. The TTS phase writes `<slug>/narration.wav`; `build_video.py` only copies it in if it is present at build time, so run `synthesize_tts.py` **before** `build_video.py`.
+- Audio drifts from slides: confirm `audio.duration` matches `TIMELINE.total_duration` within 1%. With `synthesize_tts.py` they are derived from the same audio and should match by construction; a mismatch usually means the narration track was rebuilt without re-running `build_video.py` (or vice versa) — re-run both.
+- No audio / player stuck in timer mode: confirm `video/narration.mp3` (or `.wav`) exists. The TTS phase writes `<slug>/narration.mp3` by default; `build_video.py` only copies it in if it is present at build time, so run `synthesize_tts.py` **before** `build_video.py`.

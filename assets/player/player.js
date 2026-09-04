@@ -86,8 +86,10 @@
   // by its Hershey single-stroke centerline (window.HERSHEY_FONT) and drawn by
   // sweeping stroke-dashoffset along that centerline — a real pen trajectory, not an
   // outline trace or a fade. The pen width is a constant in MathJax font units
-  // (~1000/em) so the ink reads as one uniform pen across the whole formula.
-  const MW_PEN_EM = 150;
+  // (~1000/em) so the ink reads as one uniform pen across the whole formula. It is
+  // sized for the tightest loops in the set — the cursive variables and the denser
+  // Greek letters (theta, phi, xi) — since a fatter nib fills those in solid.
+  const MW_PEN_EM = 65;
   const MW_SKIP_CP = new Set([0x2061, 0x2062, 0x2063, 0x2064]); // invisible operators
   let mwPen = null;            // the single moving pen-nib element (rides the frontier)
 
@@ -133,7 +135,20 @@
   // Map a glyph's MathJax codepoint to a HERSHEY_FONT key: math-alphanumeric
   // letters/digits fold to ASCII, Greek (plain + math-italic) to "g:<slot>", a few
   // math symbols to hand-authored "s:<name>" strokes; plain ASCII passes through.
-  const MW_GSEQ = "abgdezhqiklmncoprsstufxyw";        // α..ω (final-sigma at 17)
+  // greeks.jhf lays its glyphs out by POSITION in the Greek alphabet, not by
+  // transliteration: slot 'a'=α, 'b'=β, 'c'=γ, 'd'=δ, 'e'=ε, 'f'=ζ, 'g'=η,
+  // 'h'=θ, 'i'=ι, 'j'=κ, … 'x'=ω. (Reading it as a transliteration silently
+  // wrote ρ for θ, μ for λ, τ for σ — α/β/π happen to agree either way, which
+  // is why it went unnoticed.) Final sigma has no slot of its own, so ς reuses σ.
+  const MW_GSEQ = "abcdefghijklmnopqrrstuvwx";       // α..ω (ς at 17 shares σ)
+  const MW_GSEQ_UP = "ABCDEFGHIJKLMNOPQRSTUVWX";     // Α..Ω (no final sigma: 24 slots)
+  // Math-alphanumeric blocks whose letters are VARIABLES rather than upright text.
+  // These route to the cursive font ("c:<char>") so a formula is written in a joined
+  // hand while operators, digits and function names (sin, log) stay upright.
+  const MW_CURSIVE = new Set([0x1D434,0x1D44E,   // italic
+                              0x1D468,0x1D482,   // bold italic
+                              0x1D49C,0x1D4B6,   // script
+                              0x1D608,0x1D622]); // sans-serif italic
   const MW_SYM = { 0x222B: "s:int", 0x2211: "s:sum", 0x221A: "s:surd",
                    0x2032: "s:prime", 0x2212: "-", 0x2217: "*", 0x00D7: "x" };
   function mwCodeToKey(cp) {
@@ -141,18 +156,36 @@
       [0x1D49C,65],[0x1D4B6,97],[0x1D504,65],[0x1D51E,97],[0x1D538,65],[0x1D552,97],
       [0x1D5A0,65],[0x1D5BA,97],[0x1D5D4,65],[0x1D5EE,97],[0x1D608,65],[0x1D622,97],
       [0x1D670,65],[0x1D68A,97]];
-    for (const [b, a] of L) { if (cp >= b && cp < b + 26) return String.fromCharCode(a + (cp - b)); }
+    for (const [b, a] of L) {
+      if (cp >= b && cp < b + 26) {
+        const ch = String.fromCharCode(a + (cp - b));
+        return MW_CURSIVE.has(b) ? "c:" + ch : ch;
+      }
+    }
     for (const b of [0x1D7CE,0x1D7D8,0x1D7E2,0x1D7EC,0x1D7F6]) { if (cp >= b && cp < b + 10) return String.fromCharCode(48 + (cp - b)); }
-    if (cp === 0x210E) return "h";
+    if (cp === 0x210E) return "c:h";                 // Planck constant — a variable
+    // Greek: the plain and math-italic blocks share one layout — 25 lowercase slots
+    // (final sigma at 17) and, for the uppercase run, 24 letters plus a capital-theta
+    // symbol at index 17 that folds onto Θ.
     if (cp >= 0x3B1 && cp <= 0x3C9) return "g:" + MW_GSEQ[cp - 0x3B1];
     if (cp >= 0x1D6FC && cp <= 0x1D714) return "g:" + MW_GSEQ[cp - 0x1D6FC];
+    if (cp >= 0x391 && cp <= 0x3A9 && cp !== 0x3A2)  // 0x3A2 is an unassigned hole
+      return "g:" + MW_GSEQ_UP[cp - 0x391 - (cp > 0x3A2 ? 1 : 0)];
+    if (cp >= 0x1D6E2 && cp <= 0x1D6FA) {
+      const i = cp - 0x1D6E2;
+      return "g:" + (i === 17 ? "H" : MW_GSEQ_UP[i - (i > 17 ? 1 : 0)]);
+    }
     if (cp in MW_SYM) return MW_SYM[cp];
     if (cp >= 32 && cp < 127) return String.fromCharCode(cp);
     return null;
   }
   function mwHersheyStrokes(cp) {
     const F = window.HERSHEY_FONT; if (!F) return null;
-    const k = mwCodeToKey(cp); return k ? (F[k] || null) : null;
+    const k = mwCodeToKey(cp);
+    if (!k) return null;
+    if (F[k]) return F[k];
+    // The cursive font covers ASCII only — anything it lacks writes upright.
+    return k.startsWith("c:") ? (F[k.slice(2)] || null) : null;
   }
   function mwStrokesBBox(strokes) {
     let a = 1e9, b = 1e9, c = -1e9, d = -1e9;

@@ -47,7 +47,7 @@ All artefacts live under one folder per topic:
 ├── .mathwrite.json           # Internal: per-segment math SVGs + mathwrite/overlay bboxes
 ├── scripts/01.srt …          # Phase 3 per-page SRT
 ├── timeline.json             # Phase 4 derived global timeline
-├── narration.wav             # Phase 4 (TTS only) spoken narration track
+├── narration.mp3             # Phase 4 (TTS only) spoken narration track (.wav with --audio-format wav/both)
 ├── .tts_segments/            # Phase 4 (TTS only) per-cue wavs + combined.srt
 ├── video/                    # Phase 4 player (open index.html)
 │   └── lecture.mp4           # Phase 5 (optional) exported MP4
@@ -91,23 +91,23 @@ Build the global timeline. **Choose one of two paths depending on `tts`:**
 
 **4a. Silent (default, `tts` = false).** Run `python3 scripts/derive_timeline.py <output_dir>/<slug>/scripts <output_dir>/<slug>/.slides.json <output_dir>/<slug>/timeline.json` to produce a global timeline. The script joins per-page SRT (each starting at `00:00:00,000`) into a single timeline and resolves `[overlay:id]` markers to absolute start/end times.
 
-**4b. Voiced (`tts` = true).** Run `python3 scripts/synthesize_tts.py <output_dir>/<slug> --ref <voice_ref> [--emo-ref <emotion_ref>] [--indextts2-dir <dir>]`. This **replaces** `derive_timeline.py`: it synthesizes each cue with IndexTTS-2 (one batched `--srt` call), writes `<slug>/narration.wav`, and rebuilds `timeline.json` so slide/overlay times match the *real* spoken audio (not the sub-agents' estimated SRT timestamps). It strips `[overlay:*]` markers before speaking and reuses the same overlay contract. For Traditional Chinese it auto-converts the spoken text to Simplified via `opencc` (`--zh-convert`, default `auto`), because IndexTTS-2's tokenizer is Simplified-only — slides and SRT keep their Traditional text. Synthesis is compute-heavy (minutes); pass `--seed N` for reproducible audio. Do **not** also run `derive_timeline.py` — it would overwrite the audio-accurate timeline.
+**4b. Voiced (`tts` = true).** Run `python3 scripts/synthesize_tts.py <output_dir>/<slug> --ref <voice_ref> [--emo-ref <emotion_ref>] [--indextts2-dir <dir>]`. This **replaces** `derive_timeline.py`: it synthesizes each cue with IndexTTS-2 (one batched `--srt` call), writes `<slug>/narration.mp3` (`--audio-format wav`/`both` to keep the lossless wav), and rebuilds `timeline.json` so slide/overlay times match the *real* spoken audio (not the sub-agents' estimated SRT timestamps). It strips `[overlay:*]` markers before speaking and reuses the same overlay contract. For Traditional Chinese it auto-converts the spoken text to Simplified via `opencc` (`--zh-convert`, default `auto`), because IndexTTS-2's tokenizer is Simplified-only — slides and SRT keep their Traditional text. Synthesis is compute-heavy (minutes); pass `--seed N` for reproducible audio. Do **not** also run `derive_timeline.py` — it would overwrite the audio-accurate timeline.
 
 Then, for both paths:
 
-1. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template. If `narration.wav` is present (path 4b), it is also copied into `video/`.
-2. The player auto-advances slides per timeline and provides play/pause/seek/speed. Overlay content is **revealed in place** at its narration window (cropped from `NN.reveal.png` over the blanked base) and stays until the slide changes; a small top-right badge also fades in/out as a highlight. When `narration.wav` is present the player uses it as the master clock (audio mode); otherwise it runs on its internal timer.
+1. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template. If a narration track is present (path 4b), it is also copied into `video/` — mp3 wins when both exist.
+2. The player auto-advances slides per timeline and provides play/pause/seek/speed. Overlay content is **revealed in place** at its narration window (cropped from `NN.reveal.png` over the blanked base) and stays until the slide changes; a small top-right badge also fades in/out as a highlight. When a narration track is present the player uses it as the master clock (audio mode); otherwise it runs on its internal timer.
 3. Tell the user to open `<output_dir>/<slug>/video/index.html` in a browser.
 
 Player internals, timing model, and the TTS audio path: see `references/player-architecture.md`.
 
 ### Phase 5 — MP4 export (optional)
 
-Run only when the user wants a standalone video file (e.g. "export to MP4", "把 html 影片轉成 mp4", "匯出 mp4") rather than the browser player. **Requires Phase 4 to have completed** — it reads the built `video/index.html` (and `video/narration.wav` if the voiced path produced one).
+Run only when the user wants a standalone video file (e.g. "export to MP4", "把 html 影片轉成 mp4", "匯出 mp4") rather than the browser player. **Requires Phase 4 to have completed** — it reads the built `video/index.html` (and `video/narration.mp3`/`.wav` if the voiced path produced one).
 
 1. Verify `<output_dir>/<slug>/video/index.html` exists. If not, run Phase 4 (`build_video.py`) first.
-2. Run `node scripts/export_mp4.mjs <output_dir>/<slug>`. It steps the player frame-by-frame in headless Chrome (driving Chrome over the DevTools Protocol via Node's built-in `WebSocket` — **no npm install**) and pipes screenshots into `ffmpeg`, producing `<output_dir>/<slug>/video/lecture.mp4` (H.264 + AAC; video-only when there is no narration track). Because the player renders every frame as a pure function of time, the export is deterministic — exact overlay/caption/mathwrite states, no real-time playback. To stay fast it reads `timeline.json` and only screenshots frames that actually change: hand-written math (mathwrite) is the sole true `f(t)` animation and is captured per-frame, while static stretches (slide/overlay/caption changes are discrete under frame-stepped seek) reuse one cached screenshot — typically ~6× fewer screenshots than naive per-frame capture (it prints `screenshots N / M frames`). If `timeline.json` is missing it falls back to capturing every frame.
-3. Defaults: 30 fps, size auto-derived from the slide aspect ratio (height capped at 1080), CRF 18. Tune with `--fps`/`--width`/`--height`/`--crf`/`--preset`; override binaries with `--chrome`/`--ffmpeg`; `--out` to change the path. Pass `--fps 60` for smoother handwriting at roughly double the time. Export is compute-heavy (minutes for a multi-minute lecture).
+2. Run `node scripts/export_mp4.mjs <output_dir>/<slug>`. It steps the player frame-by-frame in headless Chrome (driving Chrome over the DevTools Protocol via Node's built-in `WebSocket` — **no npm install**) and pipes screenshots into `ffmpeg`, producing `<output_dir>/<slug>/video/lecture.mp4` (H.264 + AAC; video-only when there is no narration track). Capturing dominates the wall clock and one Chrome only saturates one core, so the frame range is split across several Chrome instances, each encoding its own chunk into `video/.export-chunks/`; the chunks are then concatenated by stream copy and the narration muxed in. The split is invisible in the output — the captured frames are byte-identical to a single-worker run. Because the player renders every frame as a pure function of time, the export is deterministic — exact overlay/caption/mathwrite states, no real-time playback. To stay fast it reads `timeline.json` and only screenshots frames that actually change: hand-written math (mathwrite) is the sole true `f(t)` animation and is captured per-frame, while static stretches (slide/overlay/caption changes are discrete under frame-stepped seek) reuse one cached screenshot — typically ~6× fewer screenshots than naive per-frame capture (it prints `screenshots N / M frames`). If `timeline.json` is missing it falls back to capturing every frame.
+3. Defaults: 30 fps, size auto-derived from the slide aspect ratio (height capped at 1080), CRF 18, JPEG capture at quality 92, and `min(6, cores − 2)` parallel Chrome workers. Tune with `--fps`/`--width`/`--height`/`--crf`/`--preset`/`--workers`/`--jpeg-quality`; `--png` restores lossless capture (slower, and the frames are re-encoded by libx264 regardless); override binaries with `--chrome`/`--ffmpeg`; `--out` to change the path. Pass `--fps 60` for smoother handwriting at roughly double the time. Export is compute-heavy (minutes for a multi-minute lecture).
 4. Tell the user the resulting `video/lecture.mp4` path.
 
 This phase needs **Node ≥ 22**, a local **Chrome/Chromium** (auto-detected; `--chrome` or `$CHROME_PATH` to override), and **ffmpeg** on PATH. It is purely additive — it never modifies the player or timeline, so it can be run any time after Phase 4 and re-run with different options.
@@ -140,8 +140,8 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 - `scripts/render_mathwrite.py` — renders mathwrite segment TeX to SVG (MathJax) and measures every mathwrite block's and overlay's on-slide bbox via headless Chrome; writes `.mathwrite.json`. Run whenever the deck declares mathwrite blocks or overlays (MathJax/network only needed for mathwrite).
 - `scripts/plan_subagent_batches.py` — splits page list into batches sized by `pages_per_subagent`.
 - `scripts/derive_timeline.py` — concatenates per-page SRT into a global timeline and resolves overlay times (silent path).
-- `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.wav`, and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
-- `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline (and `narration.wav` if present).
+- `scripts/synthesize_tts.py` — TTS path: synthesizes narration via IndexTTS-2, writes `narration.mp3` (see `--audio-format`), and rebuilds `timeline.json` from the real audio. Replaces `derive_timeline.py` when `tts` is enabled.
+- `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline (and the narration track if present).
 - `scripts/export_mp4.mjs` — (optional Phase 5) renders the built player frame-by-frame in headless Chrome and muxes with ffmpeg into `video/lecture.mp4`. Node ≥ 22, no npm deps; needs Chrome + ffmpeg.
 
 ### Assets (copied into output)
@@ -150,7 +150,7 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 - `assets/player/index.html` — reveal.js-style auto-play HTML (slides as `<img>`, with `<audio>` slot, overlay/reveal/mathwrite layers).
 - `assets/player/player.css` — layout, overlay-reveal + badge fade animation, mathwrite layer.
 - `assets/player/player.js` — timeline driver: advances slides, hand-writes mathwrite formulas (each glyph replaced by its Hershey single-stroke centerline and drawn along a real pen trajectory; data in `assets/player/hershey-font.js`), reveals overlay content in place, syncs to audio when present.
-- `assets/player/hershey-font.js` — generated single-stroke (Hershey) glyph centerlines used by the mathwrite hand-writing (built by `scripts/gen_hershey_font.py` from `assets/hershey/*.jhf`).
+- `assets/player/hershey-font.js` — generated single-stroke (Hershey) glyph centerlines used by the mathwrite hand-writing: upright Latin, Greek (both cases), and a cursive hand for math-italic variables (built by `scripts/gen_hershey_font.py` from `assets/hershey/`).
 
 ## Required Tooling
 

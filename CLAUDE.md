@@ -48,12 +48,13 @@ python3 scripts/plan_subagent_batches.py output/<slug>/.slides.json 5
 python3 scripts/derive_timeline.py output/<slug>/scripts output/<slug>/.slides.json output/<slug>/timeline.json
 
 # Phase 4 — VOICED path (replaces derive_timeline): synthesize narration via IndexTTS-2,
-# write narration.wav, and rebuild timeline.json from the real audio. Needs a built
+# write narration.mp3 (--audio-format wav/both for the lossless track), and rebuild
+# timeline.json from the real audio. Needs a built
 # IndexTTS-2 MLX CLI (Apple Silicon) + a reference voice. Compute-heavy (minutes).
 python3 scripts/synthesize_tts.py output/<slug> --ref voice.wav --indextts2-dir "$INDEXTTS2_DIR"
 
 # Phase 4 — assemble the browser player (copies assets/player/*, injects timeline,
-# and copies narration.wav into video/ if present)
+# and copies narration.{mp3,wav} into video/ if present)
 python3 scripts/build_video.py output/<slug>
 # then open output/<slug>/video/index.html
 
@@ -61,12 +62,21 @@ python3 scripts/build_video.py output/<slug>
 # in headless Chrome (raw CDP over Node's built-in WebSocket — no npm deps) and pipes
 # screenshots into ffmpeg (H.264 + AAC). Needs Chrome + ffmpeg. Compute-heavy (minutes).
 node scripts/export_mp4.mjs output/<slug>           # → output/<slug>/video/lecture.mp4
-# defaults: 30fps, size auto from slide aspect (height capped 1080); --fps/--width/--height/--crf to tune
-# Speed: it reads timeline.json and only screenshots frames that actually change — every mathwrite
-# (hand-written math) frame is rendered per-frame (the sole true f(t) animation), while static
-# stretches (slides/overlay/caption changes are discrete under frame-stepped seek) reuse one cached
-# screenshot. On a typical deck that's ~6x fewer screenshots than naive per-frame capture. Pass
-# --fps 60 for smoother handwriting at ~2x the time.
+# defaults: 30fps, size auto from slide aspect (height capped 1080), JPEG q92 capture, and
+# min(6, cores-2) parallel Chrome workers; --fps/--width/--height/--crf/--preset/--workers/
+# --jpeg-quality/--png to tune.
+# Speed comes from two independent savings:
+#   (a) It reads timeline.json and only screenshots frames that actually change — every mathwrite
+#       (hand-written math) frame is rendered per-frame (the sole true f(t) animation), while static
+#       stretches (slides/overlay/caption changes are discrete under frame-stepped seek) reuse one
+#       cached screenshot. On a typical deck that's ~6x fewer screenshots.
+#   (b) Capturing is ~99% of what's left (a 1080p screenshot costs ~85ms against a ~0.5ms renderAt
+#       round-trip, and one Chrome saturates one core), so the frame range is split across N Chrome
+#       instances that each encode their own chunk .mp4 into video/.export-chunks/; the chunks are
+#       concatenated by stream copy and the narration muxed in at the end. Measured on an 8-core M1:
+#       1.98x at 2 workers, 3.6x at 4, 4.3x at 6. JPEG capture is a further ~1.25x over PNG (the
+#       frames go through libx264 anyway); --png restores lossless capture.
+# Pass --fps 60 for smoother handwriting at ~2x the time.
 ```
 
 The silent and voiced timeline producers are **mutually exclusive** — run exactly one before
@@ -125,19 +135,32 @@ the formula bbox via `.mathwrite.json`; `derive_timeline.build_page_mathwrites` 
 + times into `timeline.mathwrites` for both silent and voiced paths. The player draws each
 seg as a pure function of t with **true single-stroke handwriting**: each MathJax glyph
 outline is *replaced* by its Hershey single-stroke centerline (`assets/player/hershey-font.js`,
-keyed in `player.js` `mwCodeToKey`: math-alphanumeric→ASCII, Greek→`g:<slot>`, a few
-hand-authored math symbols `s:<name>` like the integral, minus→`-`) fit into the glyph's own
+keyed in `player.js` `mwCodeToKey`: upright math-alphanumeric→ASCII, **math-italic
+variables→`c:<char>` in a joined cursive hand**, Greek→`g:<slot>` (lower *and* upper case),
+a few hand-authored math symbols `s:<name>` like the integral, minus→`-`) fit into the glyph's own
 box (y-flipped, since Hershey is y-down and MathJax glyph-local is y-up), then revealed by
 sweeping `stroke-dashoffset` along that centerline — a real pen trajectory, **not** an
 outline trace or a fade. Pen width is a constant in font units (`MW_PEN_EM`) so the ink reads
-as one uniform chalk/marker stroke; `<rect>` rules grow by width; a glyph with no Hershey
-mapping degrades to a clean opacity fade (never an outline trace); invisible operators
+as one uniform chalk/marker stroke, sized for the tightest loops in the set (the cursive
+variables and the denser Greek letters — a fatter nib fills those in solid); `<rect>` rules
+grow by width; a cursive glyph the script font lacks writes upright, and a glyph with no
+Hershey mapping at all degrades to a clean opacity fade (never an outline trace); invisible operators
 (U+2061…) are skipped. The single `.mw-pen` nib rides the **true stroke frontier**
 (`getPointAtLength`, mapped through the SVG/CSS transforms). `mwCollectNodes` defers (leaves
 `seg.nodes` null to retry) while the box is unlaid-out, so it never caches an all-fallback
 state. Seeking lands on the correct half-written state. A seg with missing SRT markers
 degrades to "fully drawn from slide start" (warned, never blank). The single-stroke font data
-is generated by `scripts/gen_hershey_font.py` from the bundled public-domain `assets/hershey/*.jhf`.
+is generated by `scripts/gen_hershey_font.py` from the bundled Hershey sources in
+`assets/hershey/` — `rowmans.jhf` (upright Latin), `greeks.jhf` (Greek), and the single-line SVG
+font `HersheyScriptMed.svg` (cursive); all three are **simplex** cuts, i.e. one line per stroke —
+the Complex/Duplex cuts fake a heavier weight with two parallel lines, which the player would
+write out as a doubled pen trajectory. **`greeks.jhf` orders its glyphs by position in the Greek
+alphabet over the Latin slots** — `'a'`=α, `'b'`=β, `'c'`=γ … `'x'`=ω, lowercase on `a..x` and
+uppercase on `A..X` — *not* by transliteration; `MW_GSEQ`/`MW_GSEQ_UP` index into those slots and
+must stay in step with the file. The Hershey data is free for any use *provided its
+acknowledgement travels with the font data* — it is not public domain — so
+`assets/hershey/NOTICE` carries the terms and `gen_hershey_font.py` stamps the
+acknowledgement into the generated `hershey-font.js` header. Keep both when editing.
 
 `build_video.py` injects the timeline into `assets/player/index.html` by replacing the
 `/* __TIMELINE__ */` placeholder and rewrites slide image paths from `slides.images/NN.png`
@@ -154,9 +177,13 @@ a symlink breaks when the folder is opened from cloud storage like Google Drive)
   stderr. `derive_timeline.py` warns (not fails) on a missing/empty page SRT.
 - **The player has two clocks:** it prefers the `<audio>` narration track (`tryAudio`, 1.5s
   detection timeout) and falls back to a `requestAnimationFrame` timer when no audio is present.
-  The track is `video/narration.wav`, produced by the voiced Phase 4 path; the silent path
-  leaves it absent so the player stays on the timer. `assets/player/index.html` hardcodes
-  `<source src="narration.wav">` — keep that filename in sync with `build_video.py`.
+  The track is `video/narration.mp3` (or `.wav`), produced by the voiced Phase 4 path; the
+  silent path leaves it absent so the player stays on the timer. `synthesize_tts.py`
+  `--audio-format` decides which is delivered (default `mp3` — a 50-min lecture drops from
+  ~135 MB to ~25 MB, which matters in cloud-synced folders) and records it in `timeline.json`'s
+  `"audio"` field. `assets/player/index.html` lists a `<source>` for **both** names and the
+  browser falls through to whichever exists; `build_video.py` copies exactly one in and deletes
+  the other — keep those three in sync when adding a format.
 - **Resume vs redo:** `output/<slug>/.state.json` records completed phases. On re-invocation the
   skill resumes from the first incomplete phase unless the user explicitly asks to redo one; the
   exact downstream-invalidation rules are the redo table in `references/workflow.md`.

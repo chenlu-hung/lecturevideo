@@ -1,0 +1,39 @@
+The Hershey Fonts were originally created by Dr. A. V. Hershey while working
+at the U. S. National Bureau of Standards.
+
+The format of the Font data in this distribution was originally created by
+
+    James Hurt
+    Cognition, Inc.
+    900 Technology Park Drive
+    Billerica, MA 01821
+    (mit-eddie!ci-dandelion!hurt)
+
+This distribution of the Hershey Fonts may be used by anyone for any purpose,
+commercial or otherwise, providing that the acknowledgements above are
+distributed with the font data, and that the font data is not converted into
+the format distributed by the U.S. NTIS (which holds the rights to that
+particular format).
+
+Files in this directory
+-----------------------
+rowmans.jhf           Roman Simplex — upright Latin letters, digits, operators.
+greeks.jhf            Greek Simplex — Greek, lowercase on slots a..x and
+                      uppercase on A..X, ordered by POSITION in the Greek
+                      alphabet ('a'=alpha, 'b'=beta, 'c'=gamma, ... 'x'=omega),
+                      not by transliteration.
+HersheyScriptMed.svg  Hershey Script medium, as a single-line SVG font. Prepared
+                      2011 and converted to SVG in 2019 by Windell H. Oskay
+                      (www.evilmadscientist.com), adapted from
+                      emergent.unpythonic.net/software/hershey by way of Marty
+                      McGuire's "Hershey Fonts in SVG". Carries the same notice
+                      inside its own <metadata> block.
+
+Simplex fonts draw each stroke as ONE line. The Complex and Duplex cuts draw a
+stroke as two or more parallel lines to fake a heavier weight — which reads as
+a doubled pen trajectory once the player writes the glyph out, so the simplex
+cuts are the ones this project wants.
+
+rowmans.jhf and greeks.jhf come from https://github.com/kamalmostafa/hershey-fonts
+(the .jhf font data there is under this Hershey licence; the code in that
+repository is GPL-2 and is not used here).

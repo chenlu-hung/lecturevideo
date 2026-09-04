@@ -148,7 +148,7 @@ output/<slug>/
 運作方式:
 
 - 使用本地的 [IndexTTS-2 MLX-Swift](https://github.com/) 引擎(zero-shot 聲音複製,只需幾秒乾淨人聲當參考)。
-- 逐句把講稿送進 TTS(單次 `--srt` 批次,模型只載入一次),合成 `narration.wav`(16-bit PCM mono 22.05 kHz)。
+- 逐句把講稿送進 TTS(單次 `--srt` 批次,模型只載入一次),合成 `narration.wav`(16-bit PCM mono 22.05 kHz),再轉成 `narration.mp3` 交付(`--audio-format wav`/`both` 可保留無損檔)。
 - **依真實音訊長度重算 `timeline.json`**:投影片在該頁旁白唸完時才切換,overlay 也在實際講到時淡入/淡出——不是用講稿裡估計的時間戳。
 - `[overlay:*]` 標記在送進 TTS 前會被移除,不會被唸出來。
 - **繁體中文會先用 `opencc` 轉成簡體再送進 TTS**(IndexTTS-2 的詞表只有簡體,繁體字會發音錯誤);投影片與字幕仍維持繁體,只有「唸出來的文字」被轉換。
@@ -183,7 +183,7 @@ output/<slug>/
 │   ├── split_slides.py          # 拆 slides.md 為頁面 JSON
 │   ├── plan_subagent_batches.py # 計算 sub-agent 批次
 │   ├── derive_timeline.py       # SRT → timeline.json（無聲路徑）
-│   ├── synthesize_tts.py        # TTS：合成旁白 narration.wav 並依真實音訊重算時間軸
+│   ├── synthesize_tts.py        # TTS：合成旁白 narration.mp3 並依真實音訊重算時間軸
 │   └── build_video.py           # 組裝最終 HTML 影片
 └── assets/
     ├── marp/theme.css           # 內建預設投影片主題（4:3 keynote 風格）

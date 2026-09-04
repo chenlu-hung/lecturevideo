@@ -13,7 +13,10 @@
     <div id="overlays"></div>
     <div id="captions"><span id="caption-text"></span></div>
   </div>
+  <!-- build_video.py copies exactly one of these into video/; the browser falls through
+       to the next <source> when a file is absent. mp3 is synthesize_tts.py's default. -->
   <audio id="narration" preload="metadata">
+    <source src="narration.mp3" type="audio/mpeg">
     <source src="narration.wav" type="audio/wav">
   </audio>
   <div id="controls">
