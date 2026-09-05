@@ -100,8 +100,10 @@ no code change (`scripts/remote/setup_gpt2_fp16.sh`; PyTorch is needed for that 
 and nowhere else). The second non-obvious piece is `--io-binding`: the exported `gpt2_step`
 passes its KV cache in and out as ordinary tensors, so upstream's numpy loop copies ~250 MB
 across PCIe per token — binding `present_*` back onto `past_*` as device tensors cut a token
-from 29.6 ms to 6.7 ms, bit-identically. The worker has no `--emo-ref`/`--speed`/`--precision`;
-those are accepted and warned about so the caller can forward its flags verbatim.
+from 29.6 ms to 6.7 ms, bit-identically. The worker has no `--speed`/`--precision`; those are
+accepted and warned about so the caller can forward its flags verbatim. `--emo-ref` *is*
+supported, by feeding a second wav's w2v-BERT embedding as the graph's `emo_cond` — an input
+upstream's driver wastes on the speaker's own embedding.
 
 The silent and voiced timeline producers are **mutually exclusive** — run exactly one before
 `build_video.py`. `synthesize_tts.py` emits its own audio-accurate `timeline.json`, so running

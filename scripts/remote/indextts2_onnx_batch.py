@@ -19,9 +19,9 @@ Execution-provider policy (`--providers`, default `auto`)
     AR loop where it is actually fastest today. Drop in fp16/fp32 `gpt2_*.onnx` and `auto`
     picks them up on CUDA with no code change.
 
-Deliberate gaps vs. the MLX binary: `--emo-ref`, `--speed` and `--precision` have no
-equivalent in this engine. They are accepted and warned about rather than rejected, so
-the caller can forward its flags verbatim.
+Deliberate gaps vs. the MLX binary: `--speed` and `--precision` have no equivalent in this
+engine. They are accepted and warned about rather than rejected, so the caller can forward
+its flags verbatim. `--emo-ref` *is* supported — see `_prepare_reference` below.
 
 Usage:
     indextts2_onnx_batch.py --ref speaker.wav --srt combined.srt --out <dir>
@@ -98,8 +98,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         "gpt2_step landed on CUDA, which is the only case where it applies.")
     p.add_argument("--resume", action="store_true",
                    help="skip cues whose wav already exists (restartable long jobs)")
+    p.add_argument("--emo-ref", default=None,
+                   help="separate wav whose emotion is transferred onto the cloned voice")
     # Accepted for flag-compatibility with the MLX binary; no effect here.
-    p.add_argument("--emo-ref", default=None)
     p.add_argument("--speed", default=None)
     p.add_argument("--precision", default=None)
     p.add_argument("--preproc-dir", default=None)
@@ -147,7 +148,7 @@ def make_session_factory(policy: str, threads: int):
     return placements
 
 
-def build_engine(args: argparse.Namespace):
+def build_engine(args: argparse.Namespace, emo_ref=None):
     """Load IndexTTSInfer with cfg_rate wired through and, on CUDA, a device-resident KV cache."""
     import numpy as np
     from indextts_onnx.infer import IndexTTSInfer, STOP_MEL_TOKEN
@@ -161,6 +162,29 @@ def build_engine(args: argparse.Namespace):
         def _s2mel_inference(self, *a, **kw):
             kw.setdefault("cfg_rate", cfg_rate)
             return super()._s2mel_inference(*a, **kw)
+
+        def _prepare_reference(self, ref_audio_path):
+            """Add the emotion reference upstream leaves on the table.
+
+            `gpt2_init`/`gpt2_forward` take `emo_cond` as a real, separately-shaped input
+            ([1, emo_len, 1024] of w2v-BERT hidden states) and run it through the GPT's own
+            emotion perceiver — but the ONNX driver simply assigns the *speaker's* embedding
+            to it, so every voice speaks in its own reference's affect. Feeding a second
+            wav's embedding is all that emotion transfer needs; the graph does the rest.
+
+            Only the audio-derived path is available this way. IndexTTS-2's other two
+            controls — an 8-dim emotion vector via `emo_matrix.npy`, and text-prompt emotion
+            via the QwenEmotion LLM — need weights this export does not ship.
+            """
+            super()._prepare_reference(ref_audio_path)
+            if emo_ref is None or getattr(self, "_cache_emo_ref", None) == str(emo_ref):
+                return
+            from indextts_onnx.audio import load_and_cut, resample
+            audio, sr = load_and_cut(str(emo_ref), max_seconds=15.0)
+            self._cache_emo_cond = self._run_wav2vec2bert(resample(audio, sr, 16000))
+            self._cache_emo_ref = str(emo_ref)
+            print(f"[indextts2-onnx] emotion reference: {emo_ref.name} "
+                  f"({self._cache_emo_cond.shape[1]} frames)")
 
         def _gpt_dtype(self):
             """float16 when the GPT-2 graphs were exported half, else float32."""
@@ -293,10 +317,16 @@ def main(argv: list[str]) -> int:
     if bool(args.srt) == bool(args.text):
         print("ERROR: pass exactly one of --srt or --text", file=sys.stderr)
         return 2
-    for unsupported in ("emo_ref", "speed", "precision"):
+    for unsupported in ("speed", "precision"):
         if getattr(args, unsupported) is not None:
             print(f"[indextts2-onnx] WARN: --{unsupported.replace('_', '-')} is not supported "
                   f"by the ONNX engine; ignoring", file=sys.stderr)
+    emo_ref = None
+    if args.emo_ref:
+        emo_ref = Path(args.emo_ref).expanduser().resolve()
+        if not emo_ref.is_file():
+            print(f"ERROR: emotion reference not found: {emo_ref}", file=sys.stderr)
+            return 1
 
     ref = Path(args.ref).expanduser().resolve()
     if not ref.is_file():
@@ -336,7 +366,7 @@ def main(argv: list[str]) -> int:
     import soundfile as sf
 
     t_load = time.perf_counter()
-    engine = build_engine(args)
+    engine = build_engine(args, emo_ref)
     print(f"[indextts2-onnx] loaded {len(placements)} graphs in "
           f"{time.perf_counter() - t_load:.1f}s (--providers {args.providers}, "
           f"{workers} worker(s) x {per_worker_threads} thread(s))")

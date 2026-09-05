@@ -37,8 +37,17 @@ drift from the repo. `--no-push-worker` turns that off; `--remote-worker` says w
 [`indextts-onnx`](https://github.com/vra/indextts-onnx) — IndexTTS-2 exported to ten ONNX
 graphs and run through ONNX Runtime + numpy, **with no PyTorch at inference time**.
 
-`--emo-ref`, `--speed` and `--precision` have no equivalent in that engine. The worker accepts
-and warns about them rather than failing, so `synthesize_tts.py` can forward its flags verbatim.
+`--speed` and `--precision` have no equivalent in that engine. The worker accepts and warns
+about them rather than failing, so `synthesize_tts.py` can forward its flags verbatim.
+
+`--emo-ref` does work, though `indextts-onnx` itself does not offer it. `gpt2_init` and
+`gpt2_forward` take `emo_cond` as a real, separately-shaped input ([1, emo_len, 1024] of
+w2v-BERT hidden states) and run it through the GPT's own emotion perceiver; upstream's driver
+just assigns the *speaker's* embedding to it, so every voice speaks in its reference's affect.
+The worker computes a second wav's embedding instead. Verified: no `--emo-ref` and
+`--emo-ref <the reference itself>` are bit-identical, a different wav changes the output.
+IndexTTS-2's other two emotion controls — an 8-dim vector via `emo_matrix.npy`, and text-prompt
+emotion via the QwenEmotion LLM — need weights this export does not ship.
 
 ### Execution-provider policy
 
@@ -82,10 +91,25 @@ Measured on my-4080 (RTX 4080 16 GB, 20-core CPU), three Chinese lecture cues, ~
 | \+ `--io-binding` | 3.5 s | 0.54 s | 0.22 s | **0.43** | 13.8 GB |
 | \+ fp16 GPT-2 | 2.8 s | 0.48 s | 0.20 s | **0.42** | **8.7 GB** |
 
-fp16 buys little speed once the transfer is gone (6.7 → 6.2 ms per token; what is left is
-per-run overhead, not weight bandwidth) but it halves VRAM, and 13.8 GB of a 16 GB card leaves
-no headroom for a long cue. **fp16 is the default** — `~/bin/indextts2-batch` prefers
-`models-fp16`, then `models-fp32`, then the stock int8 `models`.
+fp16 buys little speed once the transfer is gone (6.7 → 6.2 ms per token) but it halves VRAM,
+and 13.8 GB of a 16 GB card leaves no headroom for a long cue. **fp16 is the default** —
+`~/bin/indextts2-batch` prefers `models-fp16`, then `models-fp32`, then the stock int8 `models`.
+
+### Where the remaining 6 ms per token goes
+
+Not the Python bindings: rebuilding the ~100 bind calls for a step costs 0.09 ms of the
+5.42 ms measured at a 450-token cache, i.e. 2%. Not weight bandwidth either — 512M fp16
+params is ~1 GB, about 1.4 ms at the card's ~717 GB/s, and halving the bytes from fp32 only
+bought 8%. The other ~3.9 ms is kernel launch and ORT dispatch across 24 layers of batch-1,
+one-token GEMMs.
+
+**bf16 would therefore not help.** Ada's tensor cores run bf16 and fp16 at the same rate and
+the two are the same size, so it changes neither of the things that are costing time. (The
+"bf16 is 7x slower" note in the MLX port is an Apple-Silicon fact — the M1 GPU emulates it —
+and does not transfer.) The lever that would matter is cutting launches: CUDA Graphs need
+static shapes, which would mean re-exporting `gpt2_step` with a fixed-size KV cache and a
+position index instead of a cache that grows every step. That is a real change to the export
+wrappers, not a flag.
 
 `--workers N` synthesizes N cues concurrently against shared sessions (the reference
 conditioning is computed once and reused). It was worth ~1.2× on the int8 CPU path and is not
