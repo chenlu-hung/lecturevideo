@@ -88,10 +88,12 @@ def main(argv: list[str]) -> int:
         return 1
     out.mkdir(parents=True, exist_ok=True)
 
-    # infer_v2 pins HF_HUB_CACHE to './checkpoints/hf_cache' at import time, so run from the
-    # checkpoint dir's parent and let the auxiliary weights (w2v-BERT, MaskGCT, CAMPPlus,
-    # BigVGAN) land beside the rest instead of in the home cache.
     os.chdir(ckpt.parent)
+    # Best-effort only: huggingface_hub freezes the cache path into module constants the
+    # first time it is imported, and transformers pulls it in well before this runs, so
+    # setting it here does not move anything. The ~8 GB of auxiliary weights follow
+    # $HF_HOME as set by the *caller* — setup_gpt2_fp16.sh exports it before starting
+    # python. Without that they land in ~/.cache/huggingface and can fill a small /.
     os.environ.setdefault("HF_HUB_CACHE", str(ckpt / "hf_cache"))
 
     try:

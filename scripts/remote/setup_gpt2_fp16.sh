@@ -33,6 +33,11 @@ mkdir -p "$EXPORT_DIR" "$CKPT_DIR" "$ONNX_DIR" "$MODELS_DIR"
 export PATH="$HOME/.local/bin:$PATH"
 # Keep uv's wheel cache (several GB of CUDA wheels) on the big disk, not on /.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/uv-cache}"
+# Same for HuggingFace: IndexTTS2.__init__ pulls ~8 GB of auxiliary weights (w2v-BERT,
+# MaskGCT, CAMPPlus, BigVGAN). This has to be set *before* python starts — huggingface_hub
+# freezes the cache path into module constants at import, so setting it from inside the
+# export script is already too late and everything lands in ~/.cache/huggingface.
+export HF_HOME="${HF_HOME:-$ROOT/hf-cache}"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "== 1/4 index-tts $IDX_TAG =="

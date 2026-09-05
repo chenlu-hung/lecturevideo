@@ -178,6 +178,11 @@ had to be worked around, all recorded in those scripts:
 - **`uv sync` stalls.** A single quiet connection hung it for over an hour (71 s of CPU across
   that time). It runs under `UV_HTTP_TIMEOUT` and a retry loop now; the cache makes a retry
   resume rather than restart.
+- **Caches on the wrong disk.** `IndexTTS2.__init__` pulls ~8 GB of auxiliary weights and uv
+  fetches ~7 GB of wheels. `HF_HOME` and `UV_CACHE_DIR` must be exported *before* python
+  starts — `huggingface_hub` freezes its cache path into module constants at import, so
+  setting it in-process is too late — or both land under `~/.cache` and can fill a small
+  root partition.
 
 ## Setting up a remote box
 
