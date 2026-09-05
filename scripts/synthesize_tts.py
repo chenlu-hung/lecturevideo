@@ -32,12 +32,18 @@ How it stays in sync with the rest of the pipeline:
 
 The IndexTTS-2 CLI loads its model once per invocation, so every cue is synthesized in a
 single `--srt` batch call rather than one process per cue.
+
+`--remote-host` moves that one batch call to another machine over ssh + rsync (see
+`synthesize_remote` and `scripts/remote/indextts2_onnx_batch.py`) — useful when the CUDA
+box is faster than the laptop, or simply to keep the laptop free. Everything else in this
+script is unchanged by that choice.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -106,6 +112,26 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     # Workflow.
     p.add_argument("--skip-synth", action="store_true",
                    help="reuse existing per-cue wavs; only re-concat + re-time")
+    # Remote synthesis. Only the cue-level TTS moves; the SRT is still built here and
+    # the concat + timeline are still derived here from the wavs that come back.
+    p.add_argument("--remote-host", default=os.environ.get("LECTUREVIDEO_TTS_HOST"),
+                   help="ssh destination that synthesizes instead of the local binary "
+                        "(default: $LECTUREVIDEO_TTS_HOST). Needs ssh + rsync both ends.")
+    p.add_argument("--remote-cmd", default="~/bin/indextts2-batch",
+                   help="remote launcher; must accept the same --ref/--srt/--out flags")
+    p.add_argument("--remote-dir", default="~/lecturevideo-tts/jobs",
+                   help="remote scratch root; each topic gets a subdirectory under it")
+    p.add_argument("--remote-worker", default="~/lecturevideo-tts/bin/indextts2_onnx_batch.py",
+                   help="where the worker script lives on the remote")
+    p.add_argument("--no-push-worker", action="store_true",
+                   help="do not rsync scripts/remote/indextts2_onnx_batch.py to "
+                        "--remote-worker before running (default: push, so the remote "
+                        "never drifts from this checkout)")
+    p.add_argument("--remote-providers", choices=["auto", "cpu", "cuda"], default=None,
+                   help="forwarded to the remote worker's execution-provider policy")
+    p.add_argument("--remote-resume", action="store_true",
+                   help="let the remote skip cues whose wav it already has. Only safe "
+                        "when the narration text has not changed since that run.")
     return p.parse_args(argv)
 
 
@@ -167,6 +193,101 @@ def to_simplified(texts: list[str], mode: str) -> list[str]:
                            text=True).stdout.strip("\n") for tx in texts]
 
 
+def rq(path: str) -> str:
+    """Quote a path for the remote shell while leaving a leading `~/` expandable.
+
+    The job directory is named after the topic slug, which may be CJK (slugify keeps it),
+    so the ssh command line has to survive whatever the slug contains — but quoting the
+    whole thing would also kill the tilde the remote paths rely on.
+    """
+    if path.startswith("~/"):
+        return "~/" + shlex.quote(path[2:])
+    return shlex.quote(path)
+
+
+def synthesize_remote(args: argparse.Namespace, ref_path: Path, combined_srt: Path,
+                      seg_dir: Path, forwarded: list[str]) -> int:
+    """Run the cue batch on `--remote-host` and bring the wavs back.
+
+    Only the TTS itself moves. The combined SRT is built here, the per-cue wavs land in
+    the same `.tts_segments/` the local path uses, and everything downstream — concat,
+    real-audio timing, captions — runs here unchanged, so a remote run and a local run
+    produce the same `timeline.json` shape.
+
+    The transport is plain ssh + rsync: no daemon on the remote, nothing to keep running
+    between jobs, and an interrupted run leaves the finished wavs on both ends (see
+    --remote-resume).
+    """
+    host = args.remote_host
+    job = f"{args.remote_dir.rstrip('/')}/{seg_dir.parent.name}"
+
+    def ssh(command: str, **kw) -> subprocess.CompletedProcess:
+        return subprocess.run(["ssh", host, command], **kw)
+
+    made = ssh(f"mkdir -p {rq(job)}/segments", capture_output=True, text=True)
+    if made.returncode != 0:
+        print(f"ERROR: cannot create {host}:{job}\n{made.stderr.strip()}", file=sys.stderr)
+        return 1
+
+    if not args.no_push_worker:
+        worker = SCRIPT_DIR / "remote" / "indextts2_onnx_batch.py"
+        if not worker.is_file():
+            print(f"ERROR: worker script missing: {worker}", file=sys.stderr)
+            return 1
+        dest_dir = args.remote_worker.rsplit("/", 1)[0]
+        ssh(f"mkdir -p {rq(dest_dir)}", capture_output=True, text=True)
+        if subprocess.run(["rsync", "-q", str(worker),
+                           f"{host}:{args.remote_worker}"]).returncode != 0:
+            print(f"ERROR: failed to push {worker.name} to {host}", file=sys.stderr)
+            return 1
+
+    uploads = [(ref_path, "ref.wav"), (combined_srt, "combined.srt")]
+    emo = Path(args.emo_ref).resolve() if args.emo_ref else None
+    if emo:
+        uploads.append((emo, "emo.wav"))
+    for src, name in uploads:
+        if subprocess.run(["rsync", "-q", str(src), f"{host}:{job}/{name}"]).returncode != 0:
+            print(f"ERROR: failed to upload {src} to {host}:{job}/{name}", file=sys.stderr)
+            return 1
+
+    # Rewrite the paths the caller resolved locally to their uploaded counterparts.
+    remote_opts: list[str] = []
+    skip_next = False
+    for tok in forwarded:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok == "--emo-ref":
+            remote_opts += ["--emo-ref", rq(f"{job}/emo.wav")]
+            skip_next = True
+        else:
+            remote_opts.append(shlex.quote(tok))
+    if args.remote_providers:
+        remote_opts += ["--providers", args.remote_providers]
+    if args.remote_resume:
+        remote_opts.append("--resume")
+
+    remote_cmd = " ".join([
+        rq(args.remote_cmd),
+        "--ref", rq(f"{job}/ref.wav"),
+        "--srt", rq(f"{job}/combined.srt"),
+        "--out", rq(f"{job}/segments"),
+    ] + remote_opts)
+    print(f"[synthesize_tts] {host}$ {remote_cmd}")
+    rc = ssh(remote_cmd).returncode        # stream the worker's progress to the terminal
+    if rc != 0:
+        print(f"ERROR: remote synthesis exited {rc}", file=sys.stderr)
+        return rc
+
+    print(f"[synthesize_tts] fetching segment wavs from {host} …")
+    # Plain -a only: macOS ships openrsync, which rejects --info and most long flags.
+    pull = subprocess.run(["rsync", "-a", f"{host}:{job}/segments/", f"{seg_dir}/"])
+    if pull.returncode != 0:
+        print(f"ERROR: failed to fetch segments from {host}:{job}/segments", file=sys.stderr)
+        return 1
+    return 0
+
+
 def resolve_indextts2(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     """Resolve (binary, model_dir, preproc_dir), defaulting from --indextts2-dir."""
     base = Path(args.indextts2_dir).resolve() if args.indextts2_dir else None
@@ -208,12 +329,14 @@ def main(argv: list[str]) -> int:
         print(f"ERROR: reference voice not found: {ref_path}", file=sys.stderr)
         return 1
 
-    binary, model_dir, preproc_dir = resolve_indextts2(args)
-    if not args.skip_synth and not binary.is_file():
-        print(f"ERROR: IndexTTS-2 binary not found: {binary}", file=sys.stderr)
-        print("       build it with `./build.sh Release` in the IndexTTS-2 MLX checkout.",
-              file=sys.stderr)
-        return 1
+    binary = model_dir = preproc_dir = None
+    if not args.remote_host:
+        binary, model_dir, preproc_dir = resolve_indextts2(args)
+        if not args.skip_synth and not binary.is_file():
+            print(f"ERROR: IndexTTS-2 binary not found: {binary}", file=sys.stderr)
+            print("       build it with `./build.sh Release` in the IndexTTS-2 MLX checkout.",
+                  file=sys.stderr)
+            return 1
 
     pages = json.loads(slides_json.read_text(encoding="utf-8"))["pages"]
     try:
@@ -257,27 +380,32 @@ def main(argv: list[str]) -> int:
             for g, text in synth_entries:
                 f.write(f"{g}\n00:00:00,000 --> 00:00:01,000\n{text}\n\n")
 
-        cmd: list[str] = [
-            str(binary),
-            "--model", str(model_dir),
-            "--ref", str(ref_path),
-            "--srt", str(combined_srt),
-            "--out", str(seg_dir),
-            "--preproc-dir", str(preproc_dir),
-        ]
+        forwarded: list[str] = []
         if args.emo_ref:
-            cmd += ["--emo-ref", str(Path(args.emo_ref).resolve())]
+            forwarded += ["--emo-ref", str(Path(args.emo_ref).resolve())]
         for opt, val in (("--seed", args.seed), ("--steps", args.steps),
                          ("--cfg", args.cfg), ("--speed", args.speed),
                          ("--precision", args.precision)):
             if val is not None:
-                cmd += [opt, str(val)]
+                forwarded += [opt, str(val)]
 
         print(f"[synthesize_tts] synthesizing {len(synth_entries)} cues via IndexTTS-2 …")
-        print(f"[synthesize_tts] $ {' '.join(cmd)}")
-        result = subprocess.run(cmd)  # stream the CLI's own progress to the terminal
-        if result.returncode != 0:
-            print(f"ERROR: IndexTTS-2 exited {result.returncode}", file=sys.stderr)
+        if args.remote_host:
+            rc = synthesize_remote(args, ref_path, combined_srt, seg_dir, forwarded)
+        else:
+            cmd = [
+                str(binary),
+                "--model", str(model_dir),
+                "--ref", str(ref_path),
+                "--srt", str(combined_srt),
+                "--out", str(seg_dir),
+                "--preproc-dir", str(preproc_dir),
+            ] + forwarded
+            print(f"[synthesize_tts] $ {' '.join(cmd)}")
+            # stream the CLI's own progress to the terminal
+            rc = subprocess.run(cmd).returncode
+        if rc != 0:
+            print(f"ERROR: IndexTTS-2 exited {rc}", file=sys.stderr)
             return 1
     else:
         print("[synthesize_tts] --skip-synth: reusing existing segment wavs")

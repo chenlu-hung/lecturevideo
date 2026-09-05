@@ -177,13 +177,15 @@ output/<slug>/
 │   ├── marp-and-overlays.md     # marp 語法與 overlay 註解語法
 │   ├── srt-and-timing.md        # SRT 格式與 [overlay:*] 標記規則
 │   ├── subagent-prompts.md      # sub-agent 派發 prompt 範本
-│   └── player-architecture.md   # 影片播放器內部設計與未來 TTS 接點
+│   ├── player-architecture.md   # 影片播放器內部設計與未來 TTS 接點
+│   └── remote-tts.md            # 遠端 GPU 配音（--remote-host）：傳輸、EP 策略、機器設定
 ├── scripts/                     # 確定性的工具腳本
 │   ├── compile_marp.sh          # 一鍵 marp → HTML + PDF + PNG
 │   ├── split_slides.py          # 拆 slides.md 為頁面 JSON
 │   ├── plan_subagent_batches.py # 計算 sub-agent 批次
 │   ├── derive_timeline.py       # SRT → timeline.json（無聲路徑）
 │   ├── synthesize_tts.py        # TTS：合成旁白 narration.mp3 並依真實音訊重算時間軸
+│   ├── remote/                  # --remote-host 的遠端 worker 與 launcher（ONNX，免 PyTorch）
 │   └── build_video.py           # 組裝最終 HTML 影片
 └── assets/
     ├── marp/theme.css           # 內建預設投影片主題（4:3 keynote 風格）

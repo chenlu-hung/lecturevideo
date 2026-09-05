@@ -199,7 +199,8 @@ planned SRT timestamps:
    stripped from the spoken text (they are timing metadata, not narration).
 2. All cues are synthesized in a **single** `indextts2 --srt` batch call (the model loads once
    per process, so per-cue invocations would be ruinously slow). Output is one
-   `combined_<NNN>.wav` per cue.
+   `combined_<NNN>.wav` per cue. `--remote-host` sends that one call to another machine over
+   ssh + rsync instead (`references/remote-tts.md`); steps 1, 3 and 4 are unaffected.
 3. The per-cue wavs are concatenated with stdlib `wave` into `<slug>/narration.wav`, then
    transcoded to `narration.mp3` via ffmpeg unless `--audio-format wav` (default `mp3` drops
    the wav; `both` keeps it). A missing/failing ffmpeg degrades to the wav with a warning

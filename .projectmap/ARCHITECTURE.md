@@ -22,6 +22,7 @@ Everything runs locally — no external plugins or services.
 - `scripts/plan_subagent_batches.py` — `.slides.json` → narration batch plan (stdout JSON).
 - `scripts/derive_timeline.py` — per-page SRTs + `.slides.json` → global `timeline.json` (silent path).
 - `scripts/synthesize_tts.py` — voiced path: IndexTTS-2 narration → `narration.wav` + audio-accurate `timeline.json` (replaces derive_timeline).
+- `scripts/remote/indextts2_onnx_batch.py` — remote worker for `synthesize_tts.py --remote-host`: IndexTTS-2 over ONNX Runtime (torch-free) on an NVIDIA GPU, same CLI contract as the MLX binary. `scripts/remote/indextts2-batch.sh` is its launcher on the remote; `setup_gpt2_fp16.sh` / `export_gpt2_fp16.py` / `use_gpt2_variant.sh` are the one-off fp16 GPT-2 re-export that lets the CUDA EP run the AR loop.
 - `scripts/build_video.py` — `timeline.json` + slide PNGs (+ `narration.wav`) → playable `video/index.html`.
 
 ## Build / test

@@ -14,7 +14,7 @@ other plugin or skill** — everything needed is bundled here.
 
 Read `SKILL.md` first when changing behaviour; it is the spec the scripts serve. Deep,
 load-on-demand detail lives in `references/` (workflow/redo matrix, marp+overlay grammar,
-SRT timing contract, sub-agent prompt template, player internals).
+SRT timing contract, sub-agent prompt template, player internals, remote narration).
 
 ## Pipeline commands
 
@@ -53,6 +53,14 @@ python3 scripts/derive_timeline.py output/<slug>/scripts output/<slug>/.slides.j
 # IndexTTS-2 MLX CLI (Apple Silicon) + a reference voice. Compute-heavy (minutes).
 python3 scripts/synthesize_tts.py output/<slug> --ref voice.wav --indextts2-dir "$INDEXTTS2_DIR"
 
+# Phase 4 — same thing on a remote CUDA box instead of the local MLX binary (~20x faster
+# per cue on an RTX 4080: RTF 0.42 vs 8.4). Needs only ssh + rsync locally; engine on the remote.
+# Only the per-cue TTS moves — the SRT, concat, timeline and captions stay local.
+python3 scripts/synthesize_tts.py output/<slug> --ref voice.wav --remote-host my-4080
+# $LECTUREVIDEO_TTS_HOST supplies the default host. --remote-resume continues an
+# interrupted run; --remote-providers {auto,cpu,cuda} and --workers tune the remote.
+# Setup, benchmarks and the execution-provider rationale: references/remote-tts.md
+
 # Phase 4 — assemble the browser player (copies assets/player/*, injects timeline,
 # and copies narration.{mp3,wav} into video/ if present)
 python3 scripts/build_video.py output/<slug>
@@ -78,6 +86,22 @@ node scripts/export_mp4.mjs output/<slug>           # → output/<slug>/video/le
 #       frames go through libx264 anyway); --png restores lossless capture.
 # Pass --fps 60 for smoother handwriting at ~2x the time.
 ```
+
+The remote worker (`scripts/remote/indextts2_onnx_batch.py`, pushed to the remote on every
+run) is a **drop-in stand-in for the MLX binary**: same `--ref`/`--srt`/`--out` flags, same
+`<srt-stem>_<NNN>.wav` naming, same 1 ch/16-bit/22.05 kHz wavs — that shared contract is the
+only reason `synthesize_tts.py` can swap engines without touching anything downstream. It runs
+[`indextts-onnx`](https://github.com/vra/indextts-onnx) (IndexTTS-2 as ten ONNX graphs, no
+PyTorch at inference). Its non-obvious bit is the execution-provider split: the published GPT-2
+graphs are `quantize_dynamic` int8 and ONNX Runtime's CUDA EP has no `MatMulInteger` kernel, so
+putting them on CUDA is *slower* than CPU — `--providers auto` keeps `_int8` graphs on CPU and
+everything else on CUDA. That is also how the **re-exported fp16 GPT-2 graphs** take effect with
+no code change (`scripts/remote/setup_gpt2_fp16.sh`; PyTorch is needed for that one-off export
+and nowhere else). The second non-obvious piece is `--io-binding`: the exported `gpt2_step`
+passes its KV cache in and out as ordinary tensors, so upstream's numpy loop copies ~250 MB
+across PCIe per token — binding `present_*` back onto `past_*` as device tensors cut a token
+from 29.6 ms to 6.7 ms, bit-identically. The worker has no `--emo-ref`/`--speed`/`--precision`;
+those are accepted and warned about so the caller can forward its flags verbatim.
 
 The silent and voiced timeline producers are **mutually exclusive** — run exactly one before
 `build_video.py`. `synthesize_tts.py` emits its own audio-accurate `timeline.json`, so running
