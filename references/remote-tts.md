@@ -100,16 +100,56 @@ and 13.8 GB of a 16 GB card leaves no headroom for a long cue. **fp16 is the def
 Not the Python bindings: rebuilding the ~100 bind calls for a step costs 0.09 ms of the
 5.42 ms measured at a 450-token cache, i.e. 2%. Not weight bandwidth either — 512M fp16
 params is ~1 GB, about 1.4 ms at the card's ~717 GB/s, and halving the bytes from fp32 only
-bought 8%. The other ~3.9 ms is kernel launch and ORT dispatch across 24 layers of batch-1,
-one-token GEMMs.
+bought 8%. And barely the cache: growing it from 1 to 900 tokens (0.1 MB to 110 MB) moves a
+step from 4.92 to 5.64 ms. **~4.9 ms is fixed cost, independent of the work done.**
+
+It is dispatch. `gpt2_step` is 5154 nodes, still 2361 after ORT's own optimizer — and only
+~200 of those are arithmetic (96 Gemm, 49 MatMul, 50 LayerNormalization). The rest is the
+shape plumbing a TorchScript trace leaves behind when a dimension is dynamic: 377 Unsqueeze,
+301 Gather, 296 Reshape, 270 Concat, 177 Shape. At ~2 us of dispatch each, 2361 nodes is
+~4.7 ms — the fixed cost, accounted for.
 
 **bf16 would therefore not help.** Ada's tensor cores run bf16 and fp16 at the same rate and
 the two are the same size, so it changes neither of the things that are costing time. (The
 "bf16 is 7x slower" note in the MLX port is an Apple-Silicon fact — the M1 GPU emulates it —
-and does not transfer.) The lever that would matter is cutting launches: CUDA Graphs need
-static shapes, which would mean re-exporting `gpt2_step` with a fixed-size KV cache and a
-position index instead of a cache that grows every step. That is a real change to the export
-wrappers, not a flag.
+and does not transfer.)
+
+### Making the step static: measured, not shipped
+
+Two things follow from "the cost is per-node dispatch": fold the shape plumbing away, and
+stop paying CPU dispatch at all via CUDA Graphs. Both need static shapes — but *not* a
+re-export, as it first appeared. `onnx-simplifier` with every input pinned
+(`past_key_values.*` → `[1,20,MAX,64]`, `attention_mask` → `[1,MAX+1]`) constant-folds the
+graph from 5154 nodes to **962**, all of them arithmetic, and ORT will then capture a CUDA
+graph — which it refuses on the dynamic graph, because the shape ops fall back to CPU
+("25 Memcpy nodes ... cannot use the graph capture feature").
+
+The loop this implies: a fixed cache holding the real tokens **right-aligned**, zeros in
+`attention_mask` over the left padding, and each step's `present_*` sliced back to `MAX`.
+Position survives it — `GPT2StepWrapper` computes `pos_idx = attention_mask.shape[1] -
+mel_len`, and with the shape frozen, `mel_len` is a runtime input that can carry the
+position instead. Checked against the dynamic graph on the same state: logits correlate at
+0.999974 with the same argmax (the residual is fp16 accumulation over the padded length).
+
+| | ms/step | vs shipped |
+|---|---|---|
+| dynamic + `--io-binding` (shipped) | 5.60 | — |
+| static, no CUDA graph | 4.26 | 1.31x |
+| static + CUDA graph, MAX=1600 | 3.83 | 1.46x |
+| static + CUDA graph, MAX=1024 | 3.53 | **1.59x** |
+
+MAX is the new tradeoff: the step reads and writes the whole padded cache every token, so
+1600 costs 197 MB where 1024 costs 126 MB, and a cue needs roughly 450 (prefill) + its token
+count. End to end that is RTF 0.42 → ~0.27.
+
+**Not shipped.** 1.55x end to end would buy a second AR loop to keep correct alongside the
+first, a hard MAX ceiling needing a fallback when a cue overruns it, a ~1 GB static graph per
+MAX bucket (6 minutes of onnxsim each), and output that is close to but not identical to what
+ships today. Against the 4.5x that `--io-binding` cost ~60 lines, that is a poor trade — but
+the artifacts are on my-4080 under `onnx-fp16/fp16/gpt2_step_static*.onnx` if it is ever
+worth revisiting. Real kernel fusion would be the better lever: ORT's `optimize_model` fuses
+FastGelu (24) and SkipLayerNormalization (49) here but matches **no** Attention pattern,
+because these are custom traced wrappers rather than a stock HF GPT-2 export.
 
 `--workers N` synthesizes N cues concurrently against shared sessions (the reference
 conditioning is computed once and reused). It was worth ~1.2× on the int8 CPU path and is not
