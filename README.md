@@ -145,9 +145,14 @@ output/<slug>/
 幫我做一個關於「反向傳播」的上課影片,繁體中文,要有旁白,聲音用 my_voice.wav
 ```
 
+兩種引擎可選,產出完全相同(同樣的 `timeline.json`、同樣的旁白音軌),差別只在合成跑在哪裡:
+
+- **本機** — IndexTTS-2 MLX-Swift,Apple Silicon 上跑。約 RTF 8.4。
+- **遠端** — 指定 `tts_host` 為一台 ssh 主機,在 NVIDIA GPU 上以 ONNX Runtime 合成(推論端不依賴 PyTorch)。本機只需要 `ssh` 與 `rsync`。RTX 4080 上約 RTF 0.42,快約 20 倍,而且不占用本機。設定方式見 [`references/remote-tts.md`](references/remote-tts.md)。
+
 運作方式:
 
-- 使用本地的 [IndexTTS-2 MLX-Swift](https://github.com/) 引擎(zero-shot 聲音複製,只需幾秒乾淨人聲當參考)。
+- zero-shot 聲音複製,只需幾秒乾淨人聲當參考。
 - 逐句把講稿送進 TTS(單次 `--srt` 批次,模型只載入一次),合成 `narration.wav`(16-bit PCM mono 22.05 kHz),再轉成 `narration.mp3` 交付(`--audio-format wav`/`both` 可保留無損檔)。
 - **依真實音訊長度重算 `timeline.json`**:投影片在該頁旁白唸完時才切換,overlay 也在實際講到時淡入/淡出——不是用講稿裡估計的時間戳。
 - `[overlay:*]` 標記在送進 TTS 前會被移除,不會被唸出來。
@@ -157,10 +162,11 @@ output/<slug>/
 |------|------|------|
 | `tts` | `false` | 設為 true 才會合成旁白 |
 | `voice_ref` | (必填) | 要複製的參考人聲 `.wav` |
-| `emotion_ref` | 同 `voice_ref` | 另指定一段音檔來決定語氣情緒 |
-| `indextts2_dir` | `$INDEXTTS2_DIR` | IndexTTS-2 MLX checkout 路徑(含已編譯 CLI 與模型) |
+| `emotion_ref` | 同 `voice_ref` | 另指定一段音檔來決定語氣情緒(兩種引擎都支援) |
+| `tts_host` | `$LECTUREVIDEO_TTS_HOST` | 有值就走遠端引擎,留空就用本機 MLX |
+| `indextts2_dir` | `$INDEXTTS2_DIR` | IndexTTS-2 MLX checkout 路徑(含已編譯 CLI 與模型);走遠端時不需要 |
 
-需要條件:Apple Silicon、已 `./build.sh Debug` 編好的 IndexTTS-2 CLI、轉好的模型權重,繁體中文還需要 `opencc`(`brew install opencc`)。沒有這些時無聲路徑照常可用。合成是運算密集的(數分鐘),可用 `--seed` 讓結果可重現。
+需要條件:**本機引擎**要 Apple Silicon、已 `./build.sh Release` 編好的 IndexTTS-2 CLI 與轉好的模型權重;**遠端引擎**本機只要 `ssh` 與 `rsync`,引擎裝在對面那台。繁體中文兩者都需要 `opencc`(`brew install opencc`)。沒有任一引擎時無聲路徑照常可用。合成是運算密集的,可用 `--seed` 讓結果可重現。
 
 底層腳本與時間軸重算細節見 [`references/player-architecture.md`](references/player-architecture.md) 「TTS audio」一節。
 

@@ -26,10 +26,18 @@ Collect these from the user before starting. Only `topic` and `language` are req
 | `output_dir` | no | `./output` (relative to current working directory) | Parent of the per-topic folder. |
 | `tts` | no | `false` | When true, Phase 4 synthesizes spoken narration (a real voiced video) instead of a silent timer-driven one. |
 | `voice_ref` | required if `tts` | — | Path to a reference speaker `.wav` (the voice to clone). IndexTTS-2 is zero-shot; a few seconds of clean speech is enough. |
-| `emotion_ref` | no | (uses `voice_ref`) | Optional separate `.wav` whose emotion drives the delivery. |
-| `indextts2_dir` | no | `$INDEXTTS2_DIR` | Path to the IndexTTS-2 MLX checkout (provides the CLI binary + models). Required when `tts` is true unless `$INDEXTTS2_DIR` is set. |
+| `emotion_ref` | no | (uses `voice_ref`) | Optional separate `.wav` whose emotion drives the delivery. Works on both engines. |
+| `tts_host` | no | `$LECTUREVIDEO_TTS_HOST` | ssh destination that synthesizes the narration. Set → the **remote** engine; empty → the **local** MLX binary. Nothing else about the pipeline changes. |
+| `indextts2_dir` | no | `$INDEXTTS2_DIR` | Path to the IndexTTS-2 MLX checkout (provides the CLI binary + models). Required for the **local** engine unless `$INDEXTTS2_DIR` is set; ignored when `tts_host` is given. |
 
 To gather missing values, use `AskUserQuestion` with the exact field names. For `topic` and `language`, accept free-form text; for `subagent_model`, offer `opus`/`sonnet`/`haiku` chips. If the user asks for a voiced video (`tts`), confirm `voice_ref` — there is no default voice.
+
+**When `tts` is true, also settle which engine.** Offer the choice unless `tts_host` or `$LECTUREVIDEO_TTS_HOST` already answers it:
+
+- **local** — the IndexTTS-2 MLX binary on this machine. Needs `indextts2_dir`. Roughly RTF 8.4, i.e. a 15-minute lecture takes a couple of hours.
+- **remote** — an ssh host running the ONNX engine on an NVIDIA GPU. Needs only `ssh` and `rsync` here. Roughly RTF 0.42 on an RTX 4080, i.e. ~20x faster, and it leaves this machine free. Setup: `references/remote-tts.md`.
+
+Both produce the same `timeline.json` and the same narration track; the choice is only where the synthesis runs.
 
 ## Output Layout
 
@@ -93,7 +101,7 @@ Build the global timeline. **Choose one of two paths depending on `tts`:**
 
 **4b. Voiced (`tts` = true).** Run `python3 scripts/synthesize_tts.py <output_dir>/<slug> --ref <voice_ref> [--emo-ref <emotion_ref>] [--indextts2-dir <dir>]`. This **replaces** `derive_timeline.py`: it synthesizes each cue with IndexTTS-2 (one batched `--srt` call), writes `<slug>/narration.mp3` (`--audio-format wav`/`both` to keep the lossless wav), and rebuilds `timeline.json` so slide/overlay times match the *real* spoken audio (not the sub-agents' estimated SRT timestamps). It strips `[overlay:*]` markers before speaking and reuses the same overlay contract. For Traditional Chinese it auto-converts the spoken text to Simplified via `opencc` (`--zh-convert`, default `auto`), because IndexTTS-2's tokenizer is Simplified-only — slides and SRT keep their Traditional text. Synthesis is compute-heavy (minutes); pass `--seed N` for reproducible audio. Do **not** also run `derive_timeline.py` — it would overwrite the audio-accurate timeline.
 
-Add `--remote-host <ssh-host>` (or set `$LECTUREVIDEO_TTS_HOST`) to run the synthesis on a CUDA machine instead of the local MLX binary — same flags, same output, ~20× faster per cue on an RTX 4080 (RTF 0.42 vs the local MLX binary's 8.4). Only the per-cue TTS moves; the timeline is still built locally from the wavs that come back, and an interrupted run resumes with `--remote-resume`. See `references/remote-tts.md` for the transport, the execution-provider policy and how to set a remote box up.
+When `tts_host` is set, add `--remote-host <tts_host>` and drop `--indextts2-dir`: the synthesis runs on that machine instead of the local MLX binary — same flags, same output, ~20× faster per cue on an RTX 4080 (RTF 0.42 vs 8.4). Only the per-cue TTS moves; the SRT, the Traditional→Simplified conversion, the concat and the timeline all still happen here, so the two engines are interchangeable. An interrupted remote run resumes with `--remote-resume`. See `references/remote-tts.md` for the transport, the execution-provider policy and how to set a remote box up.
 
 Then, for both paths:
 
@@ -165,5 +173,5 @@ Verify availability before starting; halt with a clear instruction to install if
 - A modern browser to view the player. PDF export uses marp-cli's built-in chromium download.
 - **Only for Phase 5 (MP4 export):** Node ≥ 22, a local Chrome/Chromium (auto-detected; `--chrome` or `$CHROME_PATH` to override), and `ffmpeg` on PATH. `export_mp4.mjs` has no npm dependencies. The rest of the pipeline works without these — only MP4 export needs them.
 - **Phase 2 fit check (`check_fit.py`) and mathwrite rendering (`render_mathwrite.py`):** a local Chrome/Chromium/Edge (auto-detected; override with `CHROME_PATH` or `--chrome`). `check_fit.py` needs no network; `render_mathwrite.py` additionally needs the MathJax CDN at build time when the deck has mathwrite blocks (`--mathjax-url` can point at a local copy).
-- **Only when `tts` is enabled:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`, plus a `voice_ref` `.wav`. If the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Debug` in that checkout). The skill works fully without this — only the voiced path needs it. Alternatively, `--remote-host` needs nothing locally but `ssh` and `rsync`, with the engine installed on the remote (`references/remote-tts.md`).
+- **Only when `tts` is enabled:** a `voice_ref` `.wav`, plus one of the two engines. **Local:** a built IndexTTS-2 MLX-Swift CLI (Apple Silicon + the converted models) at `indextts2_dir`; if the binary is missing, `synthesize_tts.py` halts and tells the user to build it (`./build.sh Release` in that checkout). **Remote (`tts_host`):** nothing here but `ssh` and `rsync`, with the engine installed on that host (`references/remote-tts.md`). The skill works fully without either — only the voiced path needs one.
 - **For Traditional Chinese narration with TTS:** `opencc` on PATH (`brew install opencc`) so the spoken text can be converted to Simplified (IndexTTS-2 is Simplified-only). Without it, `synthesize_tts.py` warns and proceeds, but Traditional characters will be mispronounced.
