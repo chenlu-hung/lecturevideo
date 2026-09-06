@@ -216,3 +216,56 @@ install -m755 scripts/remote/indextts2-batch.sh ~/bin/indextts2-batch
 The launcher exists only to pin the venv and the model dir so the ssh command line stays a
 single word; `INDEXTTS_ONNX_VENV` / `INDEXTTS_ONNX_WORKER` / `INDEXTTS_ONNX_MODELS` override
 each path. It prefers `/data/lecturevideo-tts/models` when that directory exists.
+
+## Rendering on the remote
+
+`--remote-host` moves the per-cue TTS and pulls every wav back, so the concat, the timeline
+and the entire MP4 export still run locally. `scripts/remote_render.py` moves the rest:
+
+```bash
+python3 scripts/remote_render.py output/<slug> --ref voice.wav --remote-host my-4080
+```
+
+The remote runs the same three scripts this repo already ships — `synthesize_tts.py` (in its
+*local* mode, driving `~/bin/indextts2-batch` as the engine), `build_video.py`, then
+`export_mp4.mjs` — and only the artefacts come home:
+
+| direction | payload |
+|---|---|
+| up | `slides.images/`, `scripts/NN.srt`, `.slides.json`, the reference wav, and (unless `--no-push-runtime`) the four scripts plus `assets/player/` |
+| down | `video/lecture.mp4`, `narration.mp3`, `timeline.json` |
+
+The cue wavs never cross the wire — ~170 MB per deck, and the only reason to want them locally
+is resuming, which the remote job dir already covers. The job directory is deleted on success;
+any failure keeps it and says so, and `--keep-remote` keeps it regardless.
+
+`--remote-dir` defaults to `/data/lecturevideo-tts/render`. Put it on the big disk: a job holds
+the deck PNGs, every cue wav and the export's frame chunks at once, which the home partition
+often cannot take.
+
+### What stays local, and why
+
+**Marp compilation.** The deck is typeset in macOS fonts (PingFang TC, Helvetica); recompiling
+it on Linux reflows every page. That is not cosmetic — a reflowed table quietly drops its last
+row while the page still measures as fitting (`check_fit.py`, CLIPPED). Compiling locally also
+means the video and the handout PDF come from the same render, so they cannot disagree.
+
+**Captions are the exception that needs care.** They are live HTML text drawn by the *remote's*
+Chrome, not baked into the slide PNGs — so without the same font installed there, a
+remote-rendered part of a deck carries visibly different captions from a locally-rendered one.
+`scripts/remote/setup_render_host.sh` deliberately does not install it; copy the font over and
+`fc-cache` it, then check `fc-match "PingFang TC"` names the real file rather than a fallback.
+
+### Host requirements
+
+`bash scripts/remote/setup_render_host.sh` (run on the remote, no root) installs Node, a Chrome
+binary, a static ffmpeg with NVENC, and an `opencc` shim. That last one exists because
+`synthesize_tts.py` shells out to an `opencc` *binary* for Traditional→Simplified, Ubuntu ships
+it only in a package that needs root, and the Python module is user-installable — the shim must
+preserve line count, since converted lines are paired back to cues by position.
+
+One sharp edge: `synthesize_tts.py` always passes `--model`, which **overrides** what
+`~/bin/indextts2-batch` would have chosen. `--remote-tts-model` therefore has to name the same
+directory the launcher prefers (`/data/lecturevideo-tts/models-fp16` — the symlink farm whose
+GPT-2 graphs are the re-exported non-int8 ones the CUDA EP can actually run). Point it at the
+plain `models` dir and the run still succeeds, just several times slower.

@@ -103,6 +103,8 @@ Build the global timeline. **Choose one of two paths depending on `tts`:**
 
 When `tts_host` is set, add `--remote-host <tts_host>` and drop `--indextts2-dir`: the synthesis runs on that machine instead of the local MLX binary — same flags, same output, ~20× faster per cue on an RTX 4080 (RTF 0.42 vs 8.4). Only the per-cue TTS moves; the SRT, the Traditional→Simplified conversion, the concat and the timeline all still happen here, so the two engines are interchangeable. An interrupted remote run resumes with `--remote-resume`. See `references/remote-tts.md` for the transport, the execution-provider policy and how to set a remote box up.
 
+**4c. Everything but the deck, on the remote.** When the remote is also set up to render (Node + Chrome + ffmpeg + the caption font — `scripts/remote/setup_render_host.sh`), `python3 scripts/remote_render.py <output_dir>/<slug> --ref <voice_ref> --remote-host <host>` replaces steps 4b, 5 (below) and Phase 5 in one call: it uploads the compiled deck and the SRT, runs narration + player + MP4 export there, downloads `video/lecture.mp4`, `narration.mp3` and `timeline.json`, and deletes the remote job. The cue wavs never come back (~170 MB/deck saved) and this machine stays free. **Marp compilation still runs locally** — the deck is typeset in macOS fonts, and recompiling on Linux reflows pages, which is how a table silently loses its last row. See `references/remote-tts.md` §"Rendering on the remote".
+
 Then, for both paths:
 
 1. Run `python3 scripts/build_video.py <output_dir>/<slug>` to copy `assets/player/{index.html,player.css,player.js}` into `<output_dir>/<slug>/video/` (verbatim — never regenerate them) and inject `timeline.json` plus overlay metadata into the template. If a narration track is present (path 4b), it is also copied into `video/` — mp3 wins when both exist.
@@ -155,6 +157,8 @@ The redo table specifies exactly which downstream phases each kind of edit inval
 - `scripts/remote/{setup_gpt2_fp16.sh,export_gpt2_fp16.py,use_gpt2_variant.sh}` — one-off, run on the remote: re-export IndexTTS-2's GPT-2 stack to fp16 ONNX so the CUDA EP can run it (the published graphs are int8, which it cannot). This is the only step that needs PyTorch.
 - `scripts/build_video.py` — wires `assets/player/` into `<output>/video/` with injected timeline (and the narration track if present).
 - `scripts/export_mp4.mjs` — (optional Phase 5) renders the built player frame-by-frame in headless Chrome and muxes with ffmpeg into `video/lecture.mp4`. Node ≥ 22, no npm deps; needs Chrome + ffmpeg.
+- `scripts/remote_render.py` — (optional 4c) runs narration + player + MP4 on the remote and brings back only the artefacts, deleting the job there. Marp compilation stays local.
+- `scripts/remote/setup_render_host.sh` — one-off, run on the remote: installs Node, Chrome, ffmpeg and an `opencc` shim under `~/.local`, no root. Does not install the caption font — see the script's header.
 
 ### Assets (copied into output)
 

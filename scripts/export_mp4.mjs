@@ -412,8 +412,27 @@ class Worker {
 
   async stop() {
     liveWorkers.delete(this);
-    try { this.proc?.kill("SIGKILL"); } catch { /* already gone */ }
-    await rm(this.userDataDir, { recursive: true, force: true });
+    const proc = this.proc;
+    try { proc?.kill("SIGKILL"); } catch { /* already gone */ }
+    // SIGKILL returns before the process is reaped, and Chrome keeps writing its
+    // profile on the way out — deleting underneath it races, and a recursive rm
+    // that loses that race throws ENOTEMPTY on the profile subdirectory. Wait for
+    // the exit, then delete.
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      await new Promise((res) => {
+        const done = () => res();
+        proc.once("exit", done);
+        setTimeout(done, 5000).unref?.();
+      });
+    }
+    // Cleaning a scratch profile is not worth failing an export that already
+    // produced its MP4; cleanupSync() sweeps the leftovers, and it is under
+    // the OS temp dir either way.
+    try {
+      await rm(this.userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (err) {
+      console.warn(`[export_mp4] WARN: could not remove ${this.userDataDir}: ${err.message}`);
+    }
   }
 }
 
