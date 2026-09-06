@@ -72,9 +72,19 @@ dense multi-line derivation kept on one slide — see §"Dense / single-page der
 ### Verify the fit
 
 After `compile_marp.sh`, run `python3 scripts/check_fit.py <topic_dir>`. It renders the deck
-in headless Chrome and reports any page whose content overflows the slide box (exit code `3`,
-one `page NN OVERFLOW by …px` line per offender). Fix each offender (split / cut / move a
-formula to its own page) and re-compile until it exits `0`.
+in headless Chrome and reports two ways a page can lose content (exit code `3` on either):
+
+- `page NN OVERFLOW by …px` — content runs past the slide box.
+- `page NN CLIPPED — <table> by …px` — a box inside the page cuts its own rows away while
+  the page still measures as fitting. marp's default theme gives `<table>` `overflow:auto`,
+  which on a scrollable document means "scroll to see the rest" and on a slide means the
+  rest is gone. A table is the usual victim: the header and first rows render, the last
+  rows silently vanish, and nothing in a slide-level measurement notices.
+
+Fix each offender (split / cut / move a formula to its own page) and re-compile until it
+exits `0`. For a CLIPPED page it is the *box* that must fit, not just the page: shortening
+a table's cell text can reflow the column widths and leave the clip unchanged, so confirm
+by eye that the missing row is back rather than trusting the byte count of your edit.
 
 ## Overlay annotations
 

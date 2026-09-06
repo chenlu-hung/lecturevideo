@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Detect slides whose content overflows the slide box (a fit / overflow check).
+"""Detect slides whose content is cut off — either overflowing the slide box, or
+clipped inside a box that squeezes its own content.
 
 Usage:
     python3 check_fit.py <topic_dir> [--chrome <path>] [--tolerance <px>]
@@ -10,20 +11,32 @@ Reads:
 
 Prints a per-page report to stdout and exits:
     0  — every page fits
-    3  — one or more pages overflow (content runs past the slide's bottom edge)
+    3  — one or more pages OVERFLOW (content past the slide's bottom edge) or
+         CLIPPED (a box inside the page cuts its own rows/lines away)
     2  — usage error
     1  — runtime error (missing input, no Chrome, probe failure)
 
 How it works: slides.html is loaded once in headless Chrome (`--dump-dom`, the
 same browser marp-cli and render_mathwrite.py already need — no network needed,
 KaTeX is already inlined). An appended probe forces every slide visible, waits
-for fonts, and for each `<section>` compares scrollHeight against clientHeight;
-the difference is how far content spills past the box. The theme anchors content
-to the top, so overflow always runs off the bottom.
+for fonts, and compares scrollHeight against clientHeight at two levels.
 
-Run this after compile_marp.sh. On overflow, thin the offending page (split it,
-cut words, or drop a display formula to its own page) and re-compile until clean.
-The density budget that keeps pages fitting is in
+  OVERFLOW — on the `<section>`: how far content spills past the slide box. The
+  theme anchors content to the top, so overflow always runs off the bottom.
+
+  CLIPPED — on every descendant box. A section-level measurement alone is blind
+  to a table (or any box) that is flex-shrunk or overflow-hidden: it cuts its own
+  rows away while the section reports no overflow at all, so the page measures as
+  fitting and the deck ships with rows nobody can read. Both checks are pure
+  CSS-px (scrollHeight/clientHeight), so neither is disturbed by the SVG's
+  viewport scaling — mixing that scaling with CSS-px padding is what makes
+  getBoundingClientRect the wrong tool here.
+
+Run this after compile_marp.sh. Thin each offending page (split it, cut words, or
+drop a display formula to its own page) and re-compile until clean. A CLIPPED page
+needs the *box* to fit, not merely the page: trimming a table's cell text can
+reflow the column widths and leave the clip untouched, so confirm by eye that the
+missing row is back. The density budget that keeps pages fitting is in
 references/marp-and-overlays.md §"Layout & density".
 """
 from __future__ import annotations
@@ -77,7 +90,35 @@ PROBE_BODY = """
       // box. The delta is the overflow in section-local px, unaffected by the
       // SVG's viewport scaling.
       const overflow = Math.max(0, section.scrollHeight - section.clientHeight);
-      pages.push({ page: i + 1, overflow: overflow, box: section.clientHeight });
+
+      // Same test one level down. A box that clips its OWN content — a table
+      // squeezed by the flex column, most often — leaves the section's own
+      // scrollHeight untouched, so the page measures as fitting while rows are
+      // visually cut away. Ask every descendant, not just the slide.
+      const clipped = [];
+      for (const el of section.querySelectorAll('*')) {
+        // SVG children (KaTeX/MathJax output) have no scrollHeight worth
+        // reading; their HTML container is checked instead.
+        if (!(el instanceof HTMLElement)) continue;
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        // Deliberately NOT exempting overflow:auto/scroll. marp's default theme
+        // gives <table> overflow:auto so a wide table can be scrolled — but a
+        // slide is never scrolled, so on a deck that "scrollable" box is simply
+        // rows the audience cannot read. This is the exact case that ships
+        // broken: the section reports no overflow and the table swallows the
+        // remainder silently.
+        if (el.clientHeight <= 0) continue;
+        const cut = el.scrollHeight - el.clientHeight;
+        if (cut > 2) clipped.push({ tag: el.tagName.toLowerCase(), cut: Math.round(cut) });
+      }
+      // Nested boxes report the same cut; keep the worst per tag.
+      const worst = {};
+      for (const c of clipped) {
+        if (!worst[c.tag] || c.cut > worst[c.tag].cut) worst[c.tag] = c;
+      }
+      pages.push({ page: i + 1, overflow: overflow, box: section.clientHeight,
+                   clipped: Object.values(worst).sort((a, b) => b.cut - a.cut) });
     }
     finish({ pages: pages });
   } catch (e) {
@@ -158,6 +199,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     overflowing = []
+    clipping = []
     for p in pages:
         ov = p.get("overflow")
         if ov is None:
@@ -166,10 +208,22 @@ def main(argv: list[str]) -> int:
         if ov > tolerance:
             overflowing.append(p)
             print(f"[check_fit] page {p['page']:02d} OVERFLOW by {int(round(ov))}px")
+        cut = [c for c in p.get("clipped", []) if c["cut"] > tolerance]
+        if cut:
+            clipping.append(p)
+            where = ", ".join(f"<{c['tag']}> by {c['cut']}px" for c in cut)
+            print(f"[check_fit] page {p['page']:02d} CLIPPED — {where}")
 
-    if overflowing:
-        print(f"[check_fit] {len(overflowing)} of {len(pages)} page(s) overflow — "
-              "thin them (split / cut / move a formula to its own page) and re-compile.")
+    if overflowing or clipping:
+        bad = len({p["page"] for p in overflowing + clipping})
+        if overflowing:
+            print(f"[check_fit] {len(overflowing)} page(s) overflow — "
+                  "thin them (split / cut / move a formula to its own page).")
+        if clipping:
+            print(f"[check_fit] {len(clipping)} page(s) clip a box's own content — "
+                  "its rows/lines are cut off on screen even though the page fits. "
+                  "Thin the page so the box gets the height it needs.")
+        print(f"[check_fit] {bad} of {len(pages)} page(s) need work — fix and re-compile.")
         return 3
 
     print(f"[check_fit] all {len(pages)} page(s) fit.")
